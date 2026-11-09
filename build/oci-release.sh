@@ -54,8 +54,13 @@ for arch in amd64 arm64; do
     )
 done
 
+registry=${OCI_REGISTRY:-oci://ghcr.io/ks-tool}
+destination="${registry%/}/$repository:$version"
+pack_repository=${destination#oci://}
+pack_repository=${pack_repository#*/}
+
 cat > "$out/pack.yaml" <<EOF
-repository: $repository:$version
+repository: $pack_repository
 type: $artifact_type
 annotations:
   org.opencontainers.image.source: https://github.com/ks-tool/vpn-agent
@@ -70,9 +75,6 @@ items:
     annotations:
       org.opencontainers.image.title: $binary
 EOF
-
-registry=${OCI_REGISTRY:-oci://ghcr.io/ks-tool}
-destination="${registry%/}/$repository:$version"
 options=()
 if [[ ${OCI_PLAIN_HTTP:-} == 1 ]]; then
     options+=(--plain-http)
