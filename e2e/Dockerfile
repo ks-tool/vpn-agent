@@ -5,7 +5,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
-    -o /out/vpn-provider-awg ./cmd/vpn-provider-awg
+    -o /out/vpn-provider-awg ./providers/awg/cmd
 
 FROM alpine:3.23
 RUN apk add --no-cache ca-certificates iproute2 iptables

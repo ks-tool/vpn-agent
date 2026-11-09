@@ -18,14 +18,14 @@ case "$tag" in
         ;;
     providers/awg/v*)
         binary=vpn-provider-awg
-        package=./cmd/vpn-provider-awg
+        package=./providers/awg/cmd
         repository=vpn-providers/awg
         version=${tag#providers/awg/}
         artifact_type=application/vnd.ks-tool.vpn-provider-awg.v1
         ;;
     providers/example/v*)
         binary=example-provider
-        package=./cmd/example-provider
+        package=./providers/example/cmd
         repository=vpn-providers/example
         version=${tag#providers/example/}
         artifact_type=application/vnd.ks-tool.vpn-provider-example.v1
