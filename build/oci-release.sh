@@ -72,6 +72,7 @@ items:
 EOF
 
 registry=${OCI_REGISTRY:-oci://ghcr.io/ks-tool}
+destination="${registry%/}/$repository:$version"
 options=()
 if [[ ${OCI_PLAIN_HTTP:-} == 1 ]]; then
     options+=(--plain-http)
@@ -81,5 +82,5 @@ if [[ -n ${OCI_LOGIN:-} ]]; then
 fi
 (
     cd "$out"
-    "${OCI_PACKER:-oci-packer}" "$registry" -f pack.yaml "${options[@]}"
+    "${OCI_PACKER:-oci-packer}" "$destination" -f pack.yaml "${options[@]}"
 )
