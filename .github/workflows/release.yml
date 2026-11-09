@@ -22,7 +22,7 @@ jobs:
 
       - name: Install oci-packer
         run: |
-          version=1.0.1
+          version=1.0.2
           archive="oci-packer_${version}_linux_amd64.tar.gz"
           base_url="https://github.com/arenadata/oci-packer/releases/download/v${version}"
           mkdir -p "$RUNNER_TEMP/oci-packer"
