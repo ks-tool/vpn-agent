@@ -72,19 +72,22 @@ func NewRuntime(store Store, agentID string, retryDelay, resyncInterval time.Dur
 }
 
 func (r *Runtime) Register(provider Provider) error {
-	if provider == nil || provider.Name() == "" {
+	if provider == nil || len(provider.Name()) == 0 {
 		return errors.New("provider name is required")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.started {
-		return errors.New("provider registration is closed after runtime start")
-	}
 	if _, exists := r.providers[provider.Name()]; exists {
 		return fmt.Errorf("provider %q is already registered", provider.Name())
 	}
 	r.providers[provider.Name()] = provider
 	return nil
+}
+
+func (r *Runtime) Unregister(name string) {
+	r.mu.Lock()
+	delete(r.providers, name)
+	r.mu.Unlock()
 }
 
 func (r *Runtime) Start(ctx context.Context) {
@@ -391,10 +394,8 @@ func (r *Runtime) run() {
 }
 
 func (r *Runtime) reconcile(key queueKey) {
-	r.mu.RLock()
-	provider := r.providers[key.provider]
-	r.mu.RUnlock()
-	if provider == nil {
+	provider, definition, err := r.definition(key.provider, key.kind)
+	if err != nil {
 		return
 	}
 	r.operationMu.Lock()
@@ -403,6 +404,7 @@ func (r *Runtime) reconcile(key queueKey) {
 	if err != nil {
 		return
 	}
+	item.Resource.APIVersion = definition.APIVersion
 	generation := item.Resource.Generation
 	var providerStatus json.RawMessage
 	if item.Deleted {
@@ -421,6 +423,7 @@ func (r *Runtime) reconcile(key queueKey) {
 		r.enqueue(key)
 		return
 	}
+	current.Resource.APIVersion = definition.APIVersion
 	if err == nil && item.Deleted {
 		if deleteErr := r.store.Delete(key.provider, key.kind, key.name); deleteErr == nil || storage.IsNotFound(deleteErr) {
 			r.publish("DELETED", key.provider, item.Resource)

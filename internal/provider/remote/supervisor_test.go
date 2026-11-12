@@ -66,3 +66,48 @@ func TestSupervisorRequiresAbsoluteCommand(t *testing.T) {
 		t.Fatal("relative provider command was accepted")
 	}
 }
+
+func TestSupervisorReloadRestartsOnlyChangedProvider(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "starts")
+	script := filepath.Join(dir, "provider.sh")
+	content := "#!/bin/sh\necho started >> " + logPath + "\ntrap 'exit 0' TERM\nwhile :; do sleep 1; done\n"
+	if err := os.WriteFile(script, []byte(content), 0700); err != nil {
+		t.Fatal(err)
+	}
+	registration := models.ProviderRegistration{Command: script, Provider: models.ProviderDefinition{Name: "test"}}
+	supervisor := NewSupervisor([]models.ProviderRegistration{registration})
+	if err := supervisor.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer supervisor.Close()
+	waitForStarts := func(want int) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			data, _ := os.ReadFile(logPath)
+			if strings.Count(string(data), "started") >= want {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("provider starts = %q, want %d", data, want)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	waitForStarts(1)
+	external := models.ProviderRegistration{Address: "http://127.0.0.1:9092", Provider: models.ProviderDefinition{Name: "external"}}
+	if err := supervisor.Reload([]models.ProviderRegistration{registration, external}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(logPath)
+	if strings.Count(string(data), "started") != 1 {
+		t.Fatalf("unchanged provider restarted: %q", data)
+	}
+	changed := registration
+	changed.Env = map[string]string{"VPN_PROVIDER_DEPLOYED_AT": "next"}
+	if err := supervisor.Reload([]models.ProviderRegistration{changed, external}); err != nil {
+		t.Fatal(err)
+	}
+	waitForStarts(2)
+}

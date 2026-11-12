@@ -45,9 +45,7 @@ func Available() bool {
 // resolves the index), so the kind passed there is irrelevant.
 func genericLink(iface, kind string) *netlink.GenericLink {
 	return &netlink.GenericLink{
-		LinkAttrs: netlink.LinkAttrs{
-			Name: iface,
-		},
+		Name:     iface,
 		LinkType: kind,
 	}
 }

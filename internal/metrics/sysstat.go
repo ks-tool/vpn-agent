@@ -107,10 +107,7 @@ func readMemStats() (memStats, error) {
 	}
 
 	total := totalKB * 1024
-	available := availableKB * 1024
-	if available > total {
-		available = total
-	}
+	available := min(availableKB*1024, total)
 	return memStats{totalBytes: total, usedBytes: total - available}, nil
 }
 

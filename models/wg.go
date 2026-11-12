@@ -270,7 +270,7 @@ func GenerateAmneziaParams(cfg *InterfaceConfig) {
 	ranges := make([]*string, 4)
 
 	// Step 3.1: Generate strictly increasing non-overlapping ranges
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		rangeStart := currentOffset
 		rangeEnd := rangeStart + 50_000_000 + rand.IntN(100_000_000)
 		ranges[i] = new(fmt.Sprintf("%d-%d", rangeStart, rangeEnd))

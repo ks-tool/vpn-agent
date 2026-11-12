@@ -112,6 +112,7 @@ func WriteRegistration(name, agentDB string, deployment Deployment) error {
 	env := map[string]string{
 		deployment.EnvPrefix + "_DB":   statePath,
 		deployment.EnvPrefix + "_ADDR": fmt.Sprintf("127.0.0.1:%d", deployment.Port),
+		"VPN_PROVIDER_DEPLOYED_AT":     time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	if len(deployment.CorePath) > 0 {
 		env[deployment.EnvPrefix+"_CORE"] = deployment.CorePath

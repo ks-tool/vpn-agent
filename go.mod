@@ -6,7 +6,6 @@ require (
 	github.com/Jipok/wgctrl-go v1.3.0
 	github.com/amnezia-vpn/amneziawg-go v0.2.20-0.20260724121833-457d920a1a7d
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/google/uuid v1.6.0
 	github.com/horchestra/pack/sdk v1.1.0
 	github.com/ks-tool/app-config/go v1.0.0
 	github.com/natefinch/atomic v1.0.1

@@ -17,7 +17,6 @@
 package service
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -86,8 +85,7 @@ func TestWatchStorageReactsToRealFileRemoval(t *testing.T) {
 	}
 	defer func() { deleteInterface = orig }()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	if err := WatchStorage(ctx, dir); err != nil {
 		t.Fatalf("WatchStorage: %v", err)
 	}

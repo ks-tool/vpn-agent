@@ -16,11 +16,12 @@
 
 package models
 
-// ProviderDeployment selects a provider and its OCI binary release. The
-// provider's own pack defines dependencies, values and runtime registration.
+// ProviderDeployment selects a provider and either its OCI binary release or a
+// local binary. The provider's own pack defines dependencies, values and runtime registration.
 type ProviderDeployment struct {
-	Name     string `json:"name"`
-	Artifact string `json:"artifact"`
+	Name       string `json:"name"`
+	Artifact   string `json:"artifact,omitempty"`
+	BinaryPath string `json:"binaryPath,omitempty"`
 	// Options contains provider-specific installation settings interpreted by
 	// that provider's pack, for example {"userspace": true} for AWG.
 	Options map[string]any `json:"options,omitempty"`

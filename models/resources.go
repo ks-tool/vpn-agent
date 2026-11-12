@@ -66,7 +66,7 @@ type Condition struct {
 	Reason             string          `json:"reason"`
 	Message            string          `json:"message"`
 	ObservedGeneration int64           `json:"observedGeneration,omitempty"`
-	LastTransitionTime time.Time       `json:"lastTransitionTime,omitempty"`
+	LastTransitionTime time.Time       `json:"lastTransitionTime"`
 }
 
 type ConditionStatus string

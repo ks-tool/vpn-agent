@@ -26,10 +26,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"uuid"
 
 	"github.com/ks-tool/vpn-agent/providers/proxy"
-
-	"github.com/google/uuid"
 )
 
 const APIVersion = "xray.ks-tool.dev/v1"
@@ -62,7 +61,7 @@ func (Adapter) InterfaceUISchema() json.RawMessage {
 	return json.RawMessage(`{"ui:order":["name","listen","port","network","path","tls","serverName","insecure","certificateFile","privateKeyFile","disabled"]}`)
 }
 
-func (Adapter) NewSecret() (string, error) { return uuid.NewString(), nil }
+func (Adapter) NewSecret() (string, error) { return uuid.NewV4().String(), nil }
 
 func (Adapter) ValidateSecret(secret string) error {
 	if _, err := uuid.Parse(secret); err != nil {

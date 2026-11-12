@@ -342,9 +342,9 @@ func TestRouteLinkRejectsSecondOutgoingRouteOnAWGInterface(t *testing.T) {
 func TestDistributedLinkReallocatesCollidingRouteTable(t *testing.T) {
 	source := newLinkSide(t, "source-server", "source-resource", "192.0.2.1", false)
 	target := newLinkSide(t, "target-server", "target-resource", "192.0.2.2", false)
-	linkID := ""
+	var linkID string
 	collision := 0
-	for index := 0; index < 1000000; index++ {
+	for index := range 1000000 {
 		candidate := fmt.Sprintf("collision-%d", index)
 		sum := sha256.Sum256([]byte(candidate))
 		table := 100 + int(sum[0])

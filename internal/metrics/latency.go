@@ -204,9 +204,6 @@ func latencyPercentile(samples []latencySample, percentile float64) float64 {
 		values[i] = sample.ms
 	}
 	sort.Float64s(values)
-	rank := int(math.Ceil(percentile / 100 * float64(len(values))))
-	if rank < 1 {
-		rank = 1
-	}
+	rank := max(int(math.Ceil(percentile/100*float64(len(values)))), 1)
 	return values[rank-1]
 }

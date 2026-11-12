@@ -120,7 +120,7 @@ func loadRegistrations(registrations []models.ProviderRegistration, client *http
 
 func discover(address, name string, client *http.Client) (models.ProviderDefinition, error) {
 	var last error
-	for attempt := 0; attempt < 25; attempt++ {
+	for attempt := range 25 {
 		definition, err := discoverOnce(address, name, client)
 		if err == nil {
 			return definition, nil

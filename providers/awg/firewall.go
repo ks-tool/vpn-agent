@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -389,13 +390,7 @@ func setUFWNetfilterRule(content string, rule netfilterRule, add bool) (string, 
 		filtered = append(filtered, lines[i])
 	}
 	if add && !owned {
-		exists := false
-		for _, line := range filtered[start+1:] {
-			if line == ruleLine {
-				exists = true
-				break
-			}
-		}
+		exists := slices.Contains(filtered[start+1:], ruleLine)
 		if !exists {
 			filtered = append(filtered, marker, ruleLine)
 			owned = true

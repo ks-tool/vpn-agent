@@ -68,10 +68,7 @@ func main() {
 			endpoint = peer.Endpoint.String()
 		}
 
-		lastHandshakeTime := peer.LastHandshakeTime.Unix()
-		if lastHandshakeTime < 0 {
-			lastHandshakeTime = 0
-		}
+		lastHandshakeTime := max(peer.LastHandshakeTime.Unix(), 0)
 
 		allowedIPs := "(none)"
 		if len(peer.AllowedIPs) > 0 {

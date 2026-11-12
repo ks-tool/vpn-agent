@@ -19,6 +19,7 @@ package mux
 import (
 	"fmt"
 	"net/http"
+	"slices"
 )
 
 type Middleware func(http.Handler) http.Handler
@@ -33,8 +34,8 @@ func NewServeMux(mws ...Middleware) *Mux {
 }
 
 func (m *Mux) Handle(pattern string, handler http.Handler) {
-	for i := len(m.middlewares) - 1; i >= 0; i-- {
-		handler = m.middlewares[i](handler)
+	for _, v := range slices.Backward(m.middlewares) {
+		handler = v(handler)
 	}
 	m.ServeMux.Handle(pattern, handler)
 }

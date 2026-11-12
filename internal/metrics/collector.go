@@ -161,10 +161,7 @@ func (c *Collector) Run(ctx context.Context) {
 	// the same either way.
 	var persistC <-chan time.Time
 	if c.persistPath != "" {
-		every := persistInterval
-		if c.interval > every {
-			every = c.interval
-		}
+		every := max(c.interval, persistInterval)
 		pt := time.NewTicker(every)
 		defer pt.Stop()
 		persistC = pt.C
@@ -375,10 +372,7 @@ func (c *Collector) collectPeers(now time.Time) {
 			c.store.write(db, key+"/rx", now, float64(peer.ReceiveBytes))
 			c.store.write(db, key+"/tx", now, float64(peer.TransmitBytes))
 
-			handshake := peer.LastHandshakeTime.Unix()
-			if handshake < 0 {
-				handshake = 0
-			}
+			handshake := max(peer.LastHandshakeTime.Unix(), 0)
 			c.store.write(db, key+"/handshake", now, float64(handshake))
 		}
 		c.mu.Lock()

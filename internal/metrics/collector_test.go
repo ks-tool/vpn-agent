@@ -100,7 +100,7 @@ func TestCollectorPeersHistory(t *testing.T) {
 	// Two peers, three ticks each, written the way collectPeers does (rx/tx/
 	// handshake together per tick). "aaaa" < "bbbb" so the sorted output order
 	// is deterministic.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		ts := base.Add(time.Duration(i) * time.Minute)
 		c.store.write(iface, "bbbb/rx", ts, float64(100+i))
 		c.store.write(iface, "bbbb/tx", ts, float64(200+i))
@@ -405,7 +405,7 @@ func TestCollectorSnapshotEmpty(t *testing.T) {
 func TestRingBufferRetention(t *testing.T) {
 	rb := newRingBuffer(3)
 	base := time.Now()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		rb.add(base.Add(time.Duration(i)*time.Second), float64(i))
 	}
 

@@ -201,6 +201,42 @@ func TestRuntimeRetainsDesiredStateAndErrorStatus(t *testing.T) {
 	}
 }
 
+func TestRuntimeNormalizesStoredAPIVersionOnResync(t *testing.T) {
+	store, err := NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := StoredResource{Provider: "test", Resource: models.Resource{
+		ID: "legacy", APIVersion: "test/v1alpha1", Kind: "Service", Name: "public", Generation: 1,
+		Spec: json.RawMessage(`{"enabled":true}`), Status: models.ResourceStatus{Phase: models.ResourcePending},
+	}}
+	if err := store.Put(item); err != nil {
+		t.Fatal(err)
+	}
+	provider := &testProvider{}
+	runtime := NewRuntime(store, "agent", time.Millisecond, time.Hour)
+	if err := runtime.Register(provider); err != nil {
+		t.Fatal(err)
+	}
+	runtime.Start(context.Background())
+	defer runtime.Close()
+	waitForStatus(t, runtime, 1, models.ResourceReady)
+
+	provider.mu.Lock()
+	reconciled := provider.last
+	provider.mu.Unlock()
+	if reconciled.APIVersion != "test/v1" {
+		t.Fatalf("provider received legacy apiVersion %q", reconciled.APIVersion)
+	}
+	stored, err := store.Get("test", "Service", "public")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Resource.APIVersion != "test/v1" {
+		t.Fatalf("stored apiVersion was not normalized: %q", stored.Resource.APIVersion)
+	}
+}
+
 func waitForStatus(t *testing.T, runtime *Runtime, generation int64, phase models.ResourcePhase) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -273,5 +309,28 @@ func TestRuntimeFailedDeleteRemainsVisibleAndCanBeRetried(t *testing.T) {
 	items, err = runtime.List("test")
 	if err != nil || len(items) != 0 {
 		t.Fatalf("resource survived successful deletion: %+v, %v", items, err)
+	}
+}
+
+func TestRuntimeRegistersAndUnregistersProviderAfterStart(t *testing.T) {
+	store, err := NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := NewRuntime(store, "agent", time.Hour, time.Hour)
+	runtime.Start(context.Background())
+	defer runtime.Close()
+	if err := runtime.Register(&testProvider{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Schema("test"); err != nil {
+		t.Fatal(err)
+	}
+	runtime.Unregister("test")
+	if _, err := runtime.Schema("test"); !errors.Is(err, ErrUnknownProvider) {
+		t.Fatalf("provider remained registered: %v", err)
+	}
+	if err := runtime.Register(&testProvider{}); err != nil {
+		t.Fatal(err)
 	}
 }

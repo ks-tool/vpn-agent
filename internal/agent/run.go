@@ -109,6 +109,28 @@ func Run(version string) {
 		}
 	}
 	resourceRuntime.Start(context.Background())
+	providerReloader := providerremote.NewReloader(providerDir, providerConfig, supervisor, resourceRuntime, registrations)
+	providerWatchCtx, stopProviderWatch := context.WithCancel(context.Background())
+	providerWatchDone := make(chan struct{})
+	defer func() {
+		stopProviderWatch()
+		<-providerWatchDone
+	}()
+	go func() {
+		defer close(providerWatchDone)
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-providerWatchCtx.Done():
+				return
+			case <-ticker.C:
+				if err := providerReloader.Reload(); err != nil {
+					log.Warn().Err(err).Msg("failed to reload provider registrations")
+				}
+			}
+		}
+	}()
 
 	systemMetrics := metrics.NewSystemCollector(cfg.MetricsInterval)
 	systemMetrics.SetPersistence(filepath.Join(cfg.DB, metrics.HistoryFilename))
