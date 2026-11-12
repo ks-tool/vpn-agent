@@ -32,7 +32,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ks-tool/vpn-agent/storage"
+	"github.com/ks-tool/vpn-agent/v2/storage"
 )
 
 type secretStore struct {

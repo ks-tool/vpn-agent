@@ -34,7 +34,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ks-tool/vpn-agent/internal/service"
+	"github.com/ks-tool/vpn-agent/v2/internal/service"
 
 	"github.com/amnezia-vpn/amneziawg-go/conn"
 	"github.com/amnezia-vpn/amneziawg-go/device"

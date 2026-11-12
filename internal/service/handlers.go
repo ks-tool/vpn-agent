@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/ks-tool/vpn-agent/models"
-	"github.com/ks-tool/vpn-agent/storage"
+	"github.com/ks-tool/vpn-agent/v2/models"
+	"github.com/ks-tool/vpn-agent/v2/storage"
 
 	"github.com/Jipok/wgctrl-go"
 	"github.com/Jipok/wgctrl-go/wgtypes"

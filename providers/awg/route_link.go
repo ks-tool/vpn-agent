@@ -30,9 +30,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ks-tool/vpn-agent/models"
-	"github.com/ks-tool/vpn-agent/providers/proxy"
-	"github.com/ks-tool/vpn-agent/storage"
+	"github.com/ks-tool/vpn-agent/v2/models"
+	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
+	"github.com/ks-tool/vpn-agent/v2/storage"
 )
 
 type routeClientConfig struct {

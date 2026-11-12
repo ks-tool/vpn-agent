@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"os/exec"
 
-	"github.com/ks-tool/vpn-agent/internal/service"
+	"github.com/ks-tool/vpn-agent/v2/internal/service"
 
 	"github.com/rs/zerolog/log"
 	"github.com/vishvananda/netlink"

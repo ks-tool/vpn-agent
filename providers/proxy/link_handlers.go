@@ -23,7 +23,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ks-tool/vpn-agent/models"
+	"github.com/ks-tool/vpn-agent/v2/models"
 )
 
 func (p *Provider) PrepareLink(_ context.Context, link models.Link, endpoint models.LinkEndpoint) (models.LinkOffer, error) {

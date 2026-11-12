@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ks-tool/vpn-agent/internal/metrics"
-	"github.com/ks-tool/vpn-agent/models"
+	"github.com/ks-tool/vpn-agent/v2/internal/metrics"
+	"github.com/ks-tool/vpn-agent/v2/models"
 )
 
 func TestAgentSeparatesSystemAndInterfaceMetrics(t *testing.T) {

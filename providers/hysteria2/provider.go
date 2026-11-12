@@ -31,7 +31,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ks-tool/vpn-agent/providers/proxy"
+	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
 )
 
 const APIVersion = "hysteria2.ks-tool.dev/v1"

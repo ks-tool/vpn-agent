@@ -9,11 +9,11 @@ module github.com/ks-tool/vpn-admin/agent/e2e
 
 go 1.27.1
 
-replace github.com/ks-tool/vpn-agent => ../
+replace github.com/ks-tool/vpn-agent/v2 => ../
 
 require (
 	github.com/ks-tool/vpn-admin v1.0.0
-	github.com/ks-tool/vpn-agent v1.3.0
+	github.com/ks-tool/vpn-agent/v2 v2.0.0-rc.2
 	github.com/moby/moby/api v1.54.2
 	github.com/testcontainers/testcontainers-go v0.43.0
 )

@@ -21,7 +21,7 @@ import (
 	"io"
 	"strconv"
 
-	"github.com/ks-tool/vpn-agent/models"
+	"github.com/ks-tool/vpn-agent/v2/models"
 )
 
 // WritePrometheus renders snap in Prometheus text exposition format, for

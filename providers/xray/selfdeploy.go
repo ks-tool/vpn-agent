@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/ks-tool/vpn-agent/providers/proxy"
+	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
 )
 
 func (Adapter) Deploy(ctx context.Context, options map[string]any) (proxy.Deployment, error) {

@@ -19,7 +19,7 @@ package proxy
 import (
 	"encoding/json"
 
-	"github.com/ks-tool/vpn-agent/models"
+	"github.com/ks-tool/vpn-agent/v2/models"
 )
 
 type PeerSpec struct {

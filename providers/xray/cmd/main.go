@@ -17,8 +17,8 @@
 package main
 
 import (
-	"github.com/ks-tool/vpn-agent/providers/proxy"
-	"github.com/ks-tool/vpn-agent/providers/xray"
+	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
+	"github.com/ks-tool/vpn-agent/v2/providers/xray"
 )
 
 var version = "dev"

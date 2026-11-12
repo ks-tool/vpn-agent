@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ks-tool/vpn-agent/models"
+	"github.com/ks-tool/vpn-agent/v2/models"
 )
 
 // recordingBackend is a no-op Backend that records the order of link operations

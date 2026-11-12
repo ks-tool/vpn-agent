@@ -1,0 +1,44 @@
+version: 2
+
+project_name: vpn-agent
+
+builds:
+  - id: vpn-agent
+    main: ./cmd/vpn-agent
+    binary: vpn-agent
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version=v{{ .Version }}
+
+archives:
+  - id: vpn-agent-binaries
+    ids: [vpn-agent]
+    formats: [binary]
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+
+release:
+  name_template: "vpn-agent v{{ .Version }}"
+  prerelease: auto
+  replace_existing_artifacts: true

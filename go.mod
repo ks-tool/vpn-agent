@@ -1,4 +1,4 @@
-module github.com/ks-tool/vpn-agent
+module github.com/ks-tool/vpn-agent/v2
 
 go 1.27.1
 

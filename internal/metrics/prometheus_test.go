@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ks-tool/vpn-agent/models"
+	"github.com/ks-tool/vpn-agent/v2/models"
 )
 
 func TestWritePrometheus(t *testing.T) {

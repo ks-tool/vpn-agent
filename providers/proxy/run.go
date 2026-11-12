@@ -22,8 +22,8 @@ import (
 	"path/filepath"
 	"time"
 
-	agentconfig "github.com/ks-tool/vpn-agent/internal/config"
-	"github.com/ks-tool/vpn-agent/internal/resource"
+	agentconfig "github.com/ks-tool/vpn-agent/v2/internal/config"
+	"github.com/ks-tool/vpn-agent/v2/internal/resource"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"

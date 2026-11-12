@@ -22,7 +22,7 @@ import (
 
 	"github.com/Jipok/wgctrl-go"
 	"github.com/Jipok/wgctrl-go/wgtypes"
-	agentconfig "github.com/ks-tool/vpn-agent/internal/config"
+	agentconfig "github.com/ks-tool/vpn-agent/v2/internal/config"
 )
 
 type config struct {

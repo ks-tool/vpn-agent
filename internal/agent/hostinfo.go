@@ -23,7 +23,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/ks-tool/vpn-agent/models"
+	"github.com/ks-tool/vpn-agent/v2/models"
 )
 
 func GatherHostInfo(version string) models.HostInfo {

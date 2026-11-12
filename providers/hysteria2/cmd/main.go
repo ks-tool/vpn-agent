@@ -17,8 +17,8 @@
 package main
 
 import (
-	"github.com/ks-tool/vpn-agent/providers/hysteria2"
-	"github.com/ks-tool/vpn-agent/providers/proxy"
+	"github.com/ks-tool/vpn-agent/v2/providers/hysteria2"
+	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
 )
 
 var version = "dev"

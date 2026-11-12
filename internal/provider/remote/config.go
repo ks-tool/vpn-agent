@@ -27,8 +27,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ks-tool/vpn-agent/internal/resource"
-	"github.com/ks-tool/vpn-agent/models"
+	"github.com/ks-tool/vpn-agent/v2/internal/resource"
+	"github.com/ks-tool/vpn-agent/v2/models"
 )
 
 type Config struct {

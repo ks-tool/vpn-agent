@@ -3,11 +3,11 @@ name: release-agent
 on:
   push:
     tags:
-      - "agent/v*"
+      - "v*"
       - "providers/*/v*"
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -15,10 +15,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Release vpn-agent
+        if: startsWith(github.ref_name, 'v')
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install oci-packer
         run: |

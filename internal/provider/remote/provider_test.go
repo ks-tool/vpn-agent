@@ -27,10 +27,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ks-tool/vpn-agent/internal/api"
-	"github.com/ks-tool/vpn-agent/internal/resource"
-	"github.com/ks-tool/vpn-agent/models"
-	"github.com/ks-tool/vpn-agent/providers/example"
+	"github.com/ks-tool/vpn-agent/v2/internal/api"
+	"github.com/ks-tool/vpn-agent/v2/internal/resource"
+	"github.com/ks-tool/vpn-agent/v2/models"
+	"github.com/ks-tool/vpn-agent/v2/providers/example"
 )
 
 func TestExternalProviderLifecycleCrashAndRestart(t *testing.T) {

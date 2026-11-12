@@ -25,7 +25,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/ks-tool/vpn-agent/providers/proxy"
+	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
 )
 
 func run(ctx context.Context, action, name string, args ...string) error {

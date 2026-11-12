@@ -2,18 +2,18 @@
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
-    echo "usage: $0 <agent/v1.2.3|providers/awg/v1.2.3>" >&2
+    echo "usage: $0 <v1.2.3|providers/awg/v1.2.3>" >&2
     exit 2
 fi
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 tag=$1
 case "$tag" in
-    agent/v*)
+    v*)
         binary=vpn-agent
         package=./cmd/vpn-agent
         repository=vpn-agent
-        version=${tag#agent/}
+        version=$tag
         artifact_type=application/vnd.ks-tool.vpn-agent.v1
         ;;
     providers/awg/v*)
@@ -98,5 +98,5 @@ if [[ -n ${OCI_LOGIN:-} ]]; then
 fi
 (
     cd "$out"
-    "${OCI_PACKER:-oci-packer}" "$destination" -f pack.yaml "${options[@]}"
+    "${OCI_PACKER:-oci-packer}" "$destination" -f pack.yaml ${options[@]+"${options[@]}"}
 )

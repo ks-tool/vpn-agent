@@ -35,7 +35,7 @@ import (
 	adminservice "github.com/ks-tool/vpn-admin/internal/service"
 	adminmodels "github.com/ks-tool/vpn-admin/models"
 	"github.com/ks-tool/vpn-admin/storage/boltdb"
-	agentmodels "github.com/ks-tool/vpn-agent/models"
+	agentmodels "github.com/ks-tool/vpn-agent/v2/models"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"

@@ -21,8 +21,8 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/ks-tool/vpn-agent/models"
-	"github.com/ks-tool/vpn-agent/providers/proxy"
+	"github.com/ks-tool/vpn-agent/v2/models"
+	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
 )
 
 func (Adapter) PrepareLink(raw json.RawMessage, link models.Link, endpoint models.LinkEndpoint, secret, routeID string) (proxy.Peer, models.RouteDriver, error) {

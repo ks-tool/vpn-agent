@@ -29,10 +29,10 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ks-tool/vpn-agent/internal/resource"
-	"github.com/ks-tool/vpn-agent/models"
-	"github.com/ks-tool/vpn-agent/providers/proxy"
-	"github.com/ks-tool/vpn-agent/storage"
+	"github.com/ks-tool/vpn-agent/v2/internal/resource"
+	"github.com/ks-tool/vpn-agent/v2/models"
+	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
+	"github.com/ks-tool/vpn-agent/v2/storage"
 
 	"github.com/horchestra/pack/sdk/packschema"
 	packschemavalidator "github.com/horchestra/pack/sdk/schema"

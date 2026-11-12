@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ks-tool/vpn-agent/storage"
+	"github.com/ks-tool/vpn-agent/v2/storage"
 )
 
 func TestReadImportSourcePrefersAmneziaDir(t *testing.T) {

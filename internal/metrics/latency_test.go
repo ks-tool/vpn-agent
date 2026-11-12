@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/Jipok/wgctrl-go/wgtypes"
-	"github.com/ks-tool/vpn-agent/models"
+	"github.com/ks-tool/vpn-agent/v2/models"
 )
 
 func TestLatencyCollectorMeasuresPeerAndCalculatesP95(t *testing.T) {

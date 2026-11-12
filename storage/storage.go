@@ -19,7 +19,7 @@ package storage
 import (
 	"io"
 
-	"github.com/ks-tool/vpn-agent/models"
+	"github.com/ks-tool/vpn-agent/v2/models"
 )
 
 type Storage interface {

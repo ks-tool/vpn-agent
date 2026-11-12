@@ -24,7 +24,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ks-tool/vpn-agent/providers/proxy"
+	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
 )
 
 func TestHysteriaConfigAndClientURI(t *testing.T) {

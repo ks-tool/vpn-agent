@@ -23,8 +23,8 @@ import (
 	"os"
 	"path/filepath"
 
-	agentmodels "github.com/ks-tool/vpn-agent/models"
-	"github.com/ks-tool/vpn-agent/storage"
+	agentmodels "github.com/ks-tool/vpn-agent/v2/models"
+	"github.com/ks-tool/vpn-agent/v2/storage"
 
 	"github.com/natefinch/atomic"
 )

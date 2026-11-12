@@ -16,7 +16,7 @@
 
 package awg
 
-import "github.com/ks-tool/vpn-agent/models"
+import "github.com/ks-tool/vpn-agent/v2/models"
 
 const APIVersion = "awg.ks-tool.dev/v1"
 

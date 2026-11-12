@@ -25,10 +25,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ks-tool/vpn-agent/internal/api"
-	agentconfig "github.com/ks-tool/vpn-agent/internal/config"
-	"github.com/ks-tool/vpn-agent/internal/resource"
-	"github.com/ks-tool/vpn-agent/mux/middleware"
+	"github.com/ks-tool/vpn-agent/v2/internal/api"
+	agentconfig "github.com/ks-tool/vpn-agent/v2/internal/config"
+	"github.com/ks-tool/vpn-agent/v2/internal/resource"
+	"github.com/ks-tool/vpn-agent/v2/mux/middleware"
 )
 
 type ServeOptions struct {

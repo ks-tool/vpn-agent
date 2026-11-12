@@ -28,7 +28,7 @@ import (
 	"strings"
 	"uuid"
 
-	"github.com/ks-tool/vpn-agent/providers/proxy"
+	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
 )
 
 const APIVersion = "xray.ks-tool.dev/v1"

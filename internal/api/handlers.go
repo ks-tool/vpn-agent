@@ -24,11 +24,11 @@ import (
 	"net/http/pprof"
 	"sync/atomic"
 
-	"github.com/ks-tool/vpn-agent/internal/metrics"
-	"github.com/ks-tool/vpn-agent/internal/service"
-	"github.com/ks-tool/vpn-agent/models"
-	"github.com/ks-tool/vpn-agent/mux"
-	"github.com/ks-tool/vpn-agent/storage"
+	"github.com/ks-tool/vpn-agent/v2/internal/metrics"
+	"github.com/ks-tool/vpn-agent/v2/internal/service"
+	"github.com/ks-tool/vpn-agent/v2/models"
+	"github.com/ks-tool/vpn-agent/v2/mux"
+	"github.com/ks-tool/vpn-agent/v2/storage"
 
 	"github.com/Jipok/wgctrl-go"
 	"github.com/rs/zerolog/log"

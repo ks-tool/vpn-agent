@@ -16,7 +16,7 @@
 
 package main
 
-import "github.com/ks-tool/vpn-agent/internal/agent"
+import "github.com/ks-tool/vpn-agent/v2/internal/agent"
 
 var version = "dev"
 
