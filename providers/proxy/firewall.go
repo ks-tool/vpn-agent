@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -107,25 +108,77 @@ func (f *listenerFirewall) applyUFW(port int, protocol string, add bool) error {
 }
 
 func (f *listenerFirewall) applyIptables(port int, protocol string, add bool) error {
-	action := "-D"
+	rule := []string{"-p", protocol, "--dport", strconv.Itoa(port), "-j", "ACCEPT"}
 	if add {
-		action = "-A"
-	}
-	args := []string{action, "INPUT", "-p", protocol, "--dport", strconv.Itoa(port), "-j", "ACCEPT"}
-	if add {
-		if err := f.system.Run("iptables", append([]string{"-C"}, args[1:]...)...); err == nil {
-			return nil
+		changed, err := f.applyIptablesInputRule(rule)
+		if err != nil || !changed {
+			return err
 		}
 	} else {
-		if err := f.system.Run("iptables", append([]string{"-C"}, args[1:]...)...); err != nil {
+		check := append([]string{"-C", "INPUT"}, rule...)
+		if err := f.system.Run("iptables", check...); err != nil {
 			return nil
 		}
-	}
-	if err := f.system.Run("iptables", args...); err != nil {
-		return err
+		command := append([]string{"-D", "INPUT"}, rule...)
+		if err := f.system.Run("iptables", command...); err != nil {
+			return err
+		}
 	}
 	if _, err := exec.LookPath("netfilter-persistent"); err != nil {
 		return nil
 	}
 	return f.system.Run("netfilter-persistent", "save")
+}
+
+func (f *listenerFirewall) applyIptablesInputRule(rule []string) (bool, error) {
+	output, err := f.system.Output("iptables", "-S", "INPUT")
+	if err != nil {
+		return false, err
+	}
+	rejectPosition, rulePosition, position := 0, 0, 0
+	for line := range strings.Lines(output) {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "-A" || fields[1] != "INPUT" {
+			continue
+		}
+		position++
+		if rulePosition == 0 && sameIptablesRule(fields[2:], rule) {
+			rulePosition = position
+			continue
+		}
+		if rejectPosition == 0 && len(fields) >= 4 && fields[2] == "-j" && (fields[3] == "REJECT" || fields[3] == "DROP") &&
+			(len(fields) == 4 || len(fields) == 6 && fields[4] == "--reject-with") {
+			rejectPosition = position
+		}
+	}
+	if rulePosition > 0 && (rejectPosition == 0 || rulePosition < rejectPosition) {
+		return false, nil
+	}
+	if rulePosition > 0 {
+		command := append([]string{"-D", "INPUT"}, rule...)
+		if err := f.system.Run("iptables", command...); err != nil {
+			return false, err
+		}
+	}
+	command := []string{"-A", "INPUT"}
+	if rejectPosition > 0 {
+		command = []string{"-I", "INPUT", strconv.Itoa(rejectPosition)}
+	}
+	command = append(command, rule...)
+	if err := f.system.Run("iptables", command...); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func sameIptablesRule(actual, desired []string) bool {
+	normalized := make([]string, 0, len(actual))
+	for i := 0; i < len(actual); i++ {
+		if actual[i] == "-m" && i+1 < len(actual) && (actual[i+1] == "tcp" || actual[i+1] == "udp") {
+			i++
+			continue
+		}
+		normalized = append(normalized, actual[i])
+	}
+	return slices.Equal(normalized, desired)
 }
