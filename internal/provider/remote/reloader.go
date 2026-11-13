@@ -28,6 +28,7 @@ type ProviderRuntime interface {
 	Manifest() models.Manifest
 	Register(resource.Provider) error
 	Unregister(string)
+	SetProviderError(string, error)
 	Resync()
 }
 
@@ -74,13 +75,22 @@ func (r *Reloader) Reload() error {
 		}
 		providers, err := loadRegistrations([]models.ProviderRegistration{registration}, nil)
 		if err != nil {
-			return fmt.Errorf("reload provider %s: %w", name, err)
+			if processErr := r.supervisor.ProviderError(name); processErr != nil {
+				err = fmt.Errorf("%v; %w", processErr, err)
+			}
+			err = fmt.Errorf("reload provider %s: %w", name, err)
+			r.runtime.SetProviderError(name, err)
+			return err
 		}
 		if len(providers) != 1 {
-			return fmt.Errorf("reload provider %s: invalid registration", name)
+			err := fmt.Errorf("reload provider %s: invalid registration", name)
+			r.runtime.SetProviderError(name, err)
+			return err
 		}
 		if err := r.runtime.Register(providers[0]); err != nil {
-			return fmt.Errorf("reload provider %s: %w", name, err)
+			err = fmt.Errorf("reload provider %s: %w", name, err)
+			r.runtime.SetProviderError(name, err)
+			return err
 		}
 	}
 	r.registrations = desired

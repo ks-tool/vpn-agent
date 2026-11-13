@@ -57,6 +57,30 @@ func TestSupervisorRestartsAndStopsProvider(t *testing.T) {
 	supervisor.Close()
 }
 
+func TestSupervisorReportsProviderExitOutput(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "provider.sh")
+	content := "#!/bin/sh\necho 'LinkAttrs.Name cannot be empty' >&2\nexit 1\n"
+	if err := os.WriteFile(script, []byte(content), 0700); err != nil {
+		t.Fatal(err)
+	}
+	supervisor := NewSupervisor([]models.ProviderRegistration{{Command: script, Provider: models.ProviderDefinition{Name: "awg"}}})
+	if err := supervisor.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer supervisor.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := supervisor.ProviderError("awg")
+		if err != nil && strings.Contains(err.Error(), "LinkAttrs.Name cannot be empty") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("provider exit output was not reported: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func TestSupervisorRequiresAbsoluteCommand(t *testing.T) {
 	supervisor := NewSupervisor([]models.ProviderRegistration{{
 		Command: "provider", Provider: models.ProviderDefinition{Name: "test"},

@@ -81,7 +81,7 @@ func Run(version string) {
 		}
 		return
 	}
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339, NoColor: true})
 
 	var cfg config
 	if err := agentconfig.Load(&cfg, environmentPrefix(), os.Args[1:]); err != nil {
@@ -113,14 +113,7 @@ func Run(version string) {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to initialize storage")
 	}
-	resourceStore, err := resource.NewFileStore(filepath.Join(cfg.DB, "resources"))
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to initialize resource storage")
-	}
-	agentID, err := resourceStore.AgentID()
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to initialize provider identity")
-	}
+	resourceStore := resource.NewMemoryStore()
 	if err := loadInterfaces(store); err != nil {
 		log.Fatal().Err(err).Msg("failed to load WireGuard interfaces")
 	}
@@ -136,7 +129,7 @@ func Run(version string) {
 		log.Fatal().Err(err).Msg("failed to open wgctrl client for metrics")
 	}
 	defer func() { _ = metricsAwg.Close() }()
-	awgProvider, err := New(store, filepath.Join(cfg.DB, "resources", "secrets"), service.NewHandler(store, metricsAwg), version, resourceStore)
+	awgProvider, err := New(store, cfg.DB, service.NewHandler(store, metricsAwg), version, resourceStore)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to initialize AWG provider")
 	}
@@ -160,7 +153,7 @@ func Run(version string) {
 	log.Info().Msgf("Starting server on %s", cfg.Addr)
 	if err := proxy.Serve(proxy.ServeOptions{
 		Addr: cfg.Addr, TLSCert: cfg.TLSCert, TLSKey: cfg.TLSKey, TLSClientCA: cfg.TLSClientCA,
-		Store: resourceStore, AgentID: agentID, Provider: awgProvider, Start: awgProvider.RestoreLinks,
+		Store: resourceStore, Provider: awgProvider, Start: awgProvider.RestoreLinks,
 		Handler: func(runtime *resource.Runtime) http.Handler {
 			return api.NewWithResources(hostInfo, store, collector, runtime, middleware.RequestID, middleware.Logging)
 		},

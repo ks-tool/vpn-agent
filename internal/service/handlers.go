@@ -108,12 +108,12 @@ func (h *Handler) one(prev *models.InterfaceConfig, cfg models.InterfaceConfig, 
 	if ok := IsInterfaceExist(cfg); ok {
 		logger.Debug().Str("action", "update").Send()
 		if err := InterfaceUpdate(prev, cfg); err != nil {
-			return err
+			return fmt.Errorf("update interface %q: %w", cfg.Interface, err)
 		}
 	} else {
 		logger.Debug().Str("action", "create").Send()
 		if err := InterfaceCreate(cfg); err != nil {
-			return err
+			return fmt.Errorf("create interface %q: %w", cfg.Interface, err)
 		}
 	}
 

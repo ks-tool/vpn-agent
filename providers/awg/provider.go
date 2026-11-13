@@ -67,16 +67,13 @@ type Provider struct {
 	peerValidator  *packschemavalidator.Compiled
 }
 
-func New(store storage.Storage, secretsRoot string, network Network, version string, inventory ...resource.Store) (*Provider, error) {
-	secrets, err := newSecretStore(secretsRoot)
+func New(store storage.Storage, stateRoot string, network Network, version string, inventory ...resource.Store) (*Provider, error) {
+	secrets := newSecretStore()
+	links, err := newLinkStore(filepath.Join(stateRoot, "links"))
 	if err != nil {
 		return nil, err
 	}
-	links, err := newLinkStore(filepath.Join(filepath.Dir(secretsRoot), "links"))
-	if err != nil {
-		return nil, err
-	}
-	connectors, err := proxy.NewConnectorManager(filepath.Join(filepath.Dir(secretsRoot), "connectors"))
+	connectors, err := proxy.NewConnectorManager(filepath.Join(stateRoot, "connectors"))
 	if err != nil {
 		return nil, err
 	}
@@ -170,14 +167,6 @@ func (p *Provider) reconcileInterface(_ context.Context, resource models.Resourc
 	if err != nil {
 		return nil, err
 	}
-	state, stateErr := p.secrets.get(resource.ID)
-	if stateErr != nil && !storage.IsNotFound(stateErr) {
-		return nil, stateErr
-	}
-	if stateErr == nil && state.Interface != spec.Interface {
-		return nil, errors.New("interface name is immutable; create a new resource")
-	}
-
 	var previous *models.InterfaceConfig
 	old, err := p.store.Get(spec.Interface)
 	if err == nil {
@@ -201,9 +190,6 @@ func (p *Provider) reconcileInterface(_ context.Context, resource models.Resourc
 		}
 	}
 	replaceInterfaceFirewallHooks(&cfg)
-	if models.IsEmpty(cfg.PrivateKey) && stateErr == nil {
-		cfg.PrivateKey = state.PrivateKey
-	}
 	if models.IsEmpty(cfg.PrivateKey) {
 		cfg.PrivateKey, err = models.GeneratePrivateKey()
 		if err != nil {
@@ -214,9 +200,6 @@ func (p *Provider) reconcileInterface(_ context.Context, resource models.Resourc
 		return nil, err
 	}
 	if err := p.store.Set(&cfg); err != nil {
-		return nil, err
-	}
-	if err := p.secrets.put(resource.ID, secretRecord{Interface: spec.Interface, PrivateKey: cfg.PrivateKey}); err != nil {
 		return nil, err
 	}
 	status, err := json.Marshal(map[string]any{"interface": cfg.Interface, "publicKey": publicKeyString(cfg.PrivateKey)})
@@ -261,9 +244,6 @@ func (p *Provider) importInterfaceSecret(item models.Resource, rawArguments json
 	if err := p.store.Set(&cfg); err != nil {
 		return models.ActionResult{}, err
 	}
-	if err := p.secrets.put(item.ID, secretRecord{Interface: spec.Interface, PrivateKey: privateKey}); err != nil {
-		return models.ActionResult{}, err
-	}
 	return models.ActionResult{Type: models.ActionResultJSON, Data: json.RawMessage(`{"imported":true}`)}, nil
 }
 
@@ -285,7 +265,7 @@ func (p *Provider) deleteInterface(_ context.Context, resource models.Resource) 
 	if err := p.store.Delete(spec.Interface); err != nil && !storage.IsNotFound(err) {
 		return err
 	}
-	return p.secrets.delete(resource.ID)
+	return nil
 }
 
 func (p *Provider) decode(raw json.RawMessage) (InterfaceSpec, error) {

@@ -39,16 +39,13 @@ func TestPeerLifecycleActionsAndSecretHandling(t *testing.T) {
 	if err := store.Set(&legacy); err != nil {
 		t.Fatal(err)
 	}
-	inventory, err := resource.NewFileStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	inventory := resource.NewMemoryStore()
 	network := &fakeNetwork{}
 	provider, err := New(store, t.TempDir(), network, "test", inventory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime := resource.NewRuntime(inventory, "agent", time.Millisecond, time.Hour)
+	runtime := resource.NewRuntime(inventory, time.Millisecond, time.Hour)
 	if err := runtime.Register(provider); err != nil {
 		t.Fatal(err)
 	}

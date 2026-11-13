@@ -20,9 +20,18 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/horchestra/pack/pkg/bundle"
+	"github.com/horchestra/pack/pkg/render"
 	"github.com/horchestra/pack/sdk"
 	"github.com/ks-tool/vpn-agent/v2/models"
 )
+
+type renderTestTarget struct{}
+
+func (renderTestTarget) Namespace() string { return "" }
+func (renderTestTarget) Resolve(key string, _ render.Placement) (*render.Resolved, error) {
+	return &render.Resolved{Service: key}, nil
+}
 
 func TestPackOwnsDependenciesAndRegistration(t *testing.T) {
 	agentDB := t.TempDir()
@@ -44,6 +53,10 @@ func TestPackOwnsDependenciesAndRegistration(t *testing.T) {
 			t.Errorf("dependency %s is missing: %#v", name, packages.Prepare)
 		}
 	}
+	files, ok := values["files"].(map[string]any)
+	if !ok || files["kernelModule"] != "amneziawg\n" {
+		t.Fatalf("files are not a JSON object: %#v", values["files"])
+	}
 	registrationPath := filepath.Join(agentDB, "providers.d", "awg.conf")
 	if values["registrationPath"] != registrationPath {
 		t.Fatalf("registration path = %q", values["registrationPath"])
@@ -57,6 +70,34 @@ func TestPackOwnsDependenciesAndRegistration(t *testing.T) {
 	if !foundRegistration {
 		t.Fatalf("registration content does not use absolute path %q: %#v", registrationPath, packages.Content)
 	}
+	embedded, err := bundle.FromPack(pack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	embeddedRegistration := false
+	for _, file := range embedded.Root.Root.Packages["debian"].Content {
+		if file.Values == "registry" && file.Path == registrationPath {
+			embeddedRegistration = true
+		}
+	}
+	if !embeddedRegistration {
+		t.Fatalf("embedded bundle lost registration content: %#v", embedded.Root.Root.Packages["debian"].Content)
+	}
+	rendered, err := render.Render(embedded, render.Values{Values: values}, render.Context{Installation: "test", Target: renderTestTarget{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderedRegistration := false
+	for _, unit := range rendered.Units {
+		for _, file := range unit.Packages["debian"].Files {
+			if file.Path == registrationPath {
+				renderedRegistration = true
+			}
+		}
+	}
+	if !renderedRegistration {
+		t.Fatalf("render lost registration content: %#v", rendered.Units)
+	}
 	registry := values["registry"].(map[string]any)
 	provider := registry["providers"].([]any)[0].(map[string]any)
 	if provider["command"] != "/usr/local/bin/vpn-provider-awg" || provider["address"] != "http://127.0.0.1:9091" {
@@ -67,6 +108,11 @@ func TestPackOwnsDependenciesAndRegistration(t *testing.T) {
 	}
 	if err := sdk.Generate(t.TempDir(), pack); err != nil {
 		t.Fatal(err)
+	}
+	for _, file := range pack.PackRoot().Packages["debian"].Content {
+		if file.Values == "registry" && file.Path != registrationPath {
+			t.Fatalf("Generate reset registration path to %q", file.Path)
+		}
 	}
 }
 
@@ -105,9 +151,12 @@ func TestKernelPackages(t *testing.T) {
 			if len(packages.Commands) != 1 || len(packages.Commands[0]) != 2 || packages.Commands[0][0] != "modprobe" || packages.Commands[0][1] != "amneziawg" {
 				t.Errorf("kernel module is not loaded: %#v", packages.Commands)
 			}
-			if len(packages.Content) != 3 || packages.Content[2].Path != "/etc/modules-load.d/amneziawg.conf" ||
-				packages.Content[2].Values != "files/kernelModule" || packages.Content[2].Format != "text" {
+			if len(packages.Content) != 2 || packages.Content[1].Path != "/etc/modules-load.d/amneziawg.conf" ||
+				packages.Content[1].Values != "files/kernelModule" || packages.Content[1].Format != "text" {
 				t.Errorf("kernel module is not loaded at boot: %#v", packages.Content)
+			}
+			if len(packages.Services) > 0 {
+				t.Errorf("agent must reload its registrations without a restart: %#v", packages.Services)
 			}
 		})
 	}
@@ -123,7 +172,7 @@ func TestUserspacePackagesSkipKernel(t *testing.T) {
 	}
 	for _, os := range []string{"debian", "fedora"} {
 		packages := pack.PackRoot().Packages[os]
-		if len(packages.Names) != 0 || len(packages.Repo) != 0 || len(packages.Commands) != 0 || len(packages.Content) != 2 {
+		if len(packages.Names) != 0 || len(packages.Repo) != 0 || len(packages.Commands) != 0 || len(packages.Content) != 1 {
 			t.Errorf("%s userspace pack installs a kernel module: %#v", os, packages)
 		}
 	}

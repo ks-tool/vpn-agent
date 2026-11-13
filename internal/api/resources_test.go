@@ -53,7 +53,7 @@ func TestResourceAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime := resource.NewRuntime(store, "agent-id", time.Millisecond, time.Hour)
+	runtime := resource.NewRuntime(store, time.Millisecond, time.Hour)
 	if err := runtime.Register(resourceAPIProvider{}); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestResourceAPI(t *testing.T) {
 	response := request(t, http.MethodGet, server.URL+"/v1/manifest", nil)
 	var manifest models.Manifest
 	decodeResponse(t, response, &manifest)
-	if manifest.ProtocolVersion != models.ProtocolVersion || manifest.AgentID != "agent-id" || len(manifest.Providers) != 1 {
+	if manifest.ProtocolVersion != models.ProtocolVersion || len(manifest.Providers) != 1 {
 		t.Fatalf("unexpected manifest: %+v", manifest)
 	}
 

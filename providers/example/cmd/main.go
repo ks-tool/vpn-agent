@@ -58,15 +58,11 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Send()
 	}
-	agentID, err := store.AgentID()
-	if err != nil {
-		log.Fatal().Err(err).Send()
-	}
 	provider, err := example.New()
 	if err != nil {
 		log.Fatal().Err(err).Send()
 	}
-	runtime := resource.NewRuntime(store, agentID, time.Second, 30*time.Second)
+	runtime := resource.NewRuntime(store, time.Second, 30*time.Second)
 	if err := runtime.Register(provider); err != nil {
 		log.Fatal().Err(err).Send()
 	}

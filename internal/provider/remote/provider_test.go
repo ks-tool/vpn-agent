@@ -42,7 +42,7 @@ func TestExternalProviderLifecycleCrashAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	externalRuntime := resource.NewRuntime(externalStore, "external", time.Millisecond, time.Hour)
+	externalRuntime := resource.NewRuntime(externalStore, time.Millisecond, time.Hour)
 	if err := externalRuntime.Register(exampleProvider); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestExternalProviderLifecycleCrashAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	core := resource.NewRuntime(coreStore, "core", time.Millisecond, time.Hour)
+	core := resource.NewRuntime(coreStore, time.Millisecond, time.Hour)
 	if err := core.Register(remote); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestExternalProviderLifecycleCrashAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	core = resource.NewRuntime(coreStore, "core", time.Millisecond, time.Hour)
+	core = resource.NewRuntime(coreStore, time.Millisecond, time.Hour)
 	if err := core.Register(remote); err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestRemoteProtocolVersionIsCheckedBeforeMutation(t *testing.T) {
 	mutations := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/manifest" {
-			_ = json.NewEncoder(w).Encode(models.Manifest{ProtocolVersion: "v2", AgentID: "external"})
+			_ = json.NewEncoder(w).Encode(models.Manifest{ProtocolVersion: "v2"})
 			return
 		}
 		mutations++

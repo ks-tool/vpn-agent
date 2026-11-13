@@ -89,7 +89,7 @@ func TestProviderResourceLifecycleWithRealCoreProcess(t *testing.T) {
 	}
 	provider.processes.startDelay = 10 * time.Millisecond
 	provider.firewall.system = &fakeFirewallSystem{}
-	runtime := resource.NewRuntime(store, "agent", time.Millisecond, time.Hour)
+	runtime := resource.NewRuntime(store, time.Millisecond, time.Hour)
 	if err := runtime.Register(provider); err != nil {
 		t.Fatal(err)
 	}

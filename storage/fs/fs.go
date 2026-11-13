@@ -19,7 +19,7 @@ package fs
 import (
 	"bytes"
 	"encoding/json"
-	"io/fs"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -47,24 +47,20 @@ func (dir *Dir) Close() error {
 }
 
 func (dir *Dir) List() ([]agentmodels.InterfaceConfig, error) {
-	list := make([]agentmodels.InterfaceConfig, 0)
-	err := filepath.Walk(dir.root, func(path string, info fs.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() || filepath.Ext(info.Name()) != ext {
-			return nil
-		}
-
-		cfg, err := dir.get(path)
-		if err != nil {
-			return err
-		}
-		list = append(list, *cfg)
-		return nil
-	})
+	entries, err := os.ReadDir(dir.root)
 	if err != nil {
 		return nil, err
+	}
+	list := make([]agentmodels.InterfaceConfig, 0)
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ext {
+			continue
+		}
+		cfg, err := dir.get(filepath.Join(dir.root, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, *cfg)
 	}
 	return list, nil
 }
@@ -96,6 +92,9 @@ func (dir *Dir) get(filename string) (*agentmodels.InterfaceConfig, error) {
 	var cfg agentmodels.InterfaceConfig
 	if err = json.NewDecoder(fi).Decode(&cfg); err != nil {
 		return nil, err
+	}
+	if len(cfg.Interface) == 0 {
+		return nil, fmt.Errorf("%s: interface name is empty", filename)
 	}
 	return &cfg, nil
 }

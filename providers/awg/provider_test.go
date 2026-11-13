@@ -76,11 +76,8 @@ func TestInterfaceSchemaAndGenericLifecycle(t *testing.T) {
 		t.Fatalf("incomplete definition: %+v", definition)
 	}
 
-	resourceStore, err := resource.NewFileStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime := resource.NewRuntime(resourceStore, "agent", time.Millisecond, time.Hour)
+	resourceStore := resource.NewMemoryStore()
+	runtime := resource.NewRuntime(resourceStore, time.Millisecond, time.Hour)
 	if err := runtime.Register(provider); err != nil {
 		t.Fatal(err)
 	}
