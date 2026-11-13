@@ -107,6 +107,29 @@ func TestExternalProviderLifecycleCrashAndRestart(t *testing.T) {
 	waitRemoteStatus(t, core, "offline", models.ResourceReady)
 }
 
+func TestProviderDefaultClientAllowsLongLinkCommit(t *testing.T) {
+	definition := models.ProviderDefinition{Name: "example", Version: "1"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/manifest" {
+			_ = json.NewEncoder(w).Encode(models.Manifest{ProtocolVersion: models.ProtocolVersion, Providers: []models.ProviderDefinition{definition}})
+			return
+		}
+		time.Sleep(3100 * time.Millisecond)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+	provider, err := NewProvider(server.URL, definition, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	link := models.Link{ID: "link", Source: models.LinkEndpoint{ResourceID: "source"}, Target: models.LinkEndpoint{ResourceID: "target"}}
+	if err := provider.CommitLink(ctx, link, link.Source, models.LinkOffer{}); err != nil {
+		t.Fatalf("long link commit: %v", err)
+	}
+}
+
 func TestRemoteDeleteReportsPhysicalDeletionFailure(t *testing.T) {
 	definition := models.ProviderDefinition{Name: "example", Version: "1"}
 	statusCalls := 0

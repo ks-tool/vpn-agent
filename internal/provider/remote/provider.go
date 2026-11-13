@@ -56,7 +56,7 @@ func NewProvider(address string, definition models.ProviderDefinition, client *h
 		return nil, errors.New("remote provider name and version are required")
 	}
 	if client == nil {
-		client = &http.Client{Timeout: 3 * time.Second}
+		client = &http.Client{}
 	}
 	return &Provider{address: strings.TrimSuffix(address, "/"), definition: definition, client: client}, nil
 }
