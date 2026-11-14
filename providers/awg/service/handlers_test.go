@@ -20,13 +20,13 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/ks-tool/vpn-agent/v2/models"
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
 
 	"github.com/Jipok/wgctrl-go/wgtypes"
 )
 
 func TestOrphanInterfacesNoMismatch(t *testing.T) {
-	configs := []models.InterfaceConfig{{Interface: "wg0"}, {Interface: "wg1"}}
+	configs := []awgmodels.InterfaceConfig{{Interface: "wg0"}, {Interface: "wg1"}}
 	devices := []*wgtypes.Device{{Name: "wg0"}, {Name: "wg1"}}
 
 	got := orphanInterfaces(configs, devices)
@@ -36,7 +36,7 @@ func TestOrphanInterfacesNoMismatch(t *testing.T) {
 }
 
 func TestOrphanInterfacesFindsUnknownDevice(t *testing.T) {
-	configs := []models.InterfaceConfig{{Interface: "wg0"}}
+	configs := []awgmodels.InterfaceConfig{{Interface: "wg0"}}
 	devices := []*wgtypes.Device{{Name: "wg0"}, {Name: "wg-leftover"}}
 
 	got := orphanInterfaces(configs, devices)
@@ -47,7 +47,7 @@ func TestOrphanInterfacesFindsUnknownDevice(t *testing.T) {
 }
 
 func TestOrphanInterfacesNoDevices(t *testing.T) {
-	configs := []models.InterfaceConfig{{Interface: "wg0"}}
+	configs := []awgmodels.InterfaceConfig{{Interface: "wg0"}}
 	got := orphanInterfaces(configs, nil)
 	if len(got) != 0 {
 		t.Fatalf("orphanInterfaces() = %v, want none", got)
@@ -59,7 +59,7 @@ func TestOrphanInterfacesNoDevices(t *testing.T) {
 // function's concern — it only reports devices the host has that storage
 // doesn't, not the reverse.
 func TestOrphanInterfacesIgnoresMissingDevice(t *testing.T) {
-	configs := []models.InterfaceConfig{{Interface: "wg0"}, {Interface: "wg1"}}
+	configs := []awgmodels.InterfaceConfig{{Interface: "wg0"}, {Interface: "wg1"}}
 	devices := []*wgtypes.Device{{Name: "wg0"}}
 
 	got := orphanInterfaces(configs, devices)
@@ -69,7 +69,7 @@ func TestOrphanInterfacesIgnoresMissingDevice(t *testing.T) {
 }
 
 func TestUnmanagedInterfacesReportsKindSorted(t *testing.T) {
-	configs := []models.InterfaceConfig{{Interface: "wg0"}}
+	configs := []awgmodels.InterfaceConfig{{Interface: "wg0"}}
 	devices := []*wgtypes.Device{
 		{Name: "wg0", IsAmnezia: true},
 		{Name: "wg-plain"},
@@ -77,9 +77,9 @@ func TestUnmanagedInterfacesReportsKindSorted(t *testing.T) {
 	}
 
 	got := unmanagedInterfaces(configs, devices)
-	want := []models.UnmanagedInterface{
-		{Name: "awg1", Kind: models.InterfaceKindAmnezia},
-		{Name: "wg-plain", Kind: models.InterfaceKindWireGuard},
+	want := []awgmodels.UnmanagedInterface{
+		{Name: "awg1", Kind: awgmodels.InterfaceKindAmnezia},
+		{Name: "wg-plain", Kind: awgmodels.InterfaceKindWireGuard},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unmanagedInterfaces() = %v, want %v", got, want)
@@ -89,7 +89,7 @@ func TestUnmanagedInterfacesReportsKindSorted(t *testing.T) {
 // An empty result must still be a non-nil slice: the admin's UI reads .length
 // off the JSON, and a nil slice would marshal as null.
 func TestUnmanagedInterfacesEmptyIsNotNil(t *testing.T) {
-	got := unmanagedInterfaces([]models.InterfaceConfig{{Interface: "wg0"}}, []*wgtypes.Device{{Name: "wg0"}})
+	got := unmanagedInterfaces([]awgmodels.InterfaceConfig{{Interface: "wg0"}}, []*wgtypes.Device{{Name: "wg0"}})
 	if got == nil || len(got) != 0 {
 		t.Fatalf("unmanagedInterfaces() = %#v, want empty non-nil slice", got)
 	}

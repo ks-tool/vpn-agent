@@ -79,8 +79,8 @@ const (
 
 type Manifest struct {
 	ProtocolVersion string               `json:"protocolVersion"`
-	AgentID         string               `json:"agentId"`
 	Providers       []ProviderDefinition `json:"providers"`
+	ProviderErrors  map[string]string    `json:"providerErrors,omitempty"`
 }
 
 type ProviderDefinition struct {

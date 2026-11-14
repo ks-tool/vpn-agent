@@ -21,7 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ks-tool/vpn-agent/v2/models"
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/rs/zerolog/log"
@@ -109,7 +109,7 @@ func handleStorageEvent(event fsnotify.Event) {
 		"interface config file removed while agent was running — tearing down the link")
 	// The config file is already gone, so there are no PreDown/PostDown hooks
 	// to run — tear the link down by name only.
-	if err := deleteInterface(models.InterfaceConfig{Interface: iface}); err != nil {
+	if err := deleteInterface(awgmodels.InterfaceConfig{Interface: iface}); err != nil {
 		log.Error().Err(err).Str("interface", iface).Msg("failed to delete interface after its config file disappeared")
 	}
 }

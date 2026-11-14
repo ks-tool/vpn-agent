@@ -144,7 +144,7 @@ func (s *socksServer) listen(ctx context.Context, address string) error {
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	go func() {
 		<-ctx.Done()
 		_ = listener.Close()
@@ -167,7 +167,7 @@ func (s *socksServer) listen(ctx context.Context, address string) error {
 }
 
 func (s *socksServer) handle(ctx context.Context, client net.Conn) {
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	if err := socksHandshake(client); err != nil {
 		return
 	}
@@ -182,7 +182,7 @@ func (s *socksServer) handle(ctx context.Context, client net.Conn) {
 			_ = writeSocksReply(client, 5)
 			return
 		}
-		defer remote.Close()
+		defer func() { _ = remote.Close() }()
 		if err := writeSocksReply(client, 0); err != nil {
 			return
 		}
@@ -199,7 +199,7 @@ func (s *socksServer) handle(ctx context.Context, client net.Conn) {
 			_ = writeSocksReply(client, 1)
 			return
 		}
-		defer listener.Close()
+		defer func() { _ = listener.Close() }()
 		if err := writeSocksReply(client, 0, listener.LocalAddr()); err != nil {
 			return
 		}

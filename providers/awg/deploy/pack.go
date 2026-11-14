@@ -26,7 +26,6 @@ import (
 )
 
 type Config struct {
-	Artifact         string            `json:"artifact" jsonschema:"required,format=uri"`
 	Registry         map[string]any    `json:"registry"`
 	Files            map[string]string `json:"files"`
 	RegistrationPath string            `json:"registrationPath" jsonschema:"required"`
@@ -34,15 +33,18 @@ type Config struct {
 }
 
 func (c *Config) SetDefaults() {
-	c.Artifact = "oci://ghcr.io/ks-tool/vpn-providers/awg:v1.0.0-alpha.1"
-	c.RegistrationPath = "/var/lib/vpn-agent/providers.d/awg.conf"
-	c.Files = map[string]string{
-		"aptRepository": "Types: deb deb-src\n" +
-			"URIs: https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu\n" +
-			"Suites: focal\n" +
-			"Components: main\n" +
-			"Signed-By: /etc/apt/keyrings/amneziawg.asc\n",
-		"kernelModule": "amneziawg\n",
+	if len(c.RegistrationPath) == 0 {
+		c.RegistrationPath = "/var/lib/vpn-agent/providers.d/awg.conf"
+	}
+	if c.Files == nil {
+		c.Files = map[string]string{
+			"aptRepository": "Types: deb deb-src\n" +
+				"URIs: https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu\n" +
+				"Suites: focal\n" +
+				"Components: main\n" +
+				"Signed-By: /etc/apt/keyrings/amneziawg.asc\n",
+			"kernelModule": "amneziawg\n",
+		}
 	}
 }
 
@@ -55,19 +57,15 @@ func (c *Config) PackRoot() packschema.Root {
 		Prepare: []string{"ca-certificates", "iproute2", "procps"},
 		Sysctls: map[string]string{"net.ipv4.ip_forward": "1"},
 		Content: []packschema.File{
-			{Path: "/usr/local/bin/vpn-provider-awg", URL: "{{ .artifact }}", Mode: "0755"},
 			{Path: c.RegistrationPath, Values: "registry", Format: "json", Mode: "0600"},
 		},
-		Services: []string{"vpn-agent"},
 	}
 	fedora := packschema.OSInstall{
 		Prepare: []string{"ca-certificates", "iproute", "procps-ng"},
 		Sysctls: map[string]string{"net.ipv4.ip_forward": "1"},
 		Content: []packschema.File{
-			{Path: "/usr/local/bin/vpn-provider-awg", URL: "{{ .artifact }}", Mode: "0755"},
 			{Path: c.RegistrationPath, Values: "registry", Format: "json", Mode: "0600"},
 		},
-		Services: []string{"vpn-agent"},
 	}
 
 	if !c.userspace {
@@ -111,9 +109,6 @@ func New(provider models.ProviderDeployment, agentDB string) (sdk.Pack, map[stri
 	if provider.Name != "awg" {
 		return nil, nil, fmt.Errorf("provider %q is not AWG", provider.Name)
 	}
-	if provider.Artifact == "" {
-		return nil, nil, fmt.Errorf("AWG provider OCI artifact is required")
-	}
 	userspace := false
 	for name, value := range provider.Options {
 		if name != "userspace" {
@@ -140,9 +135,12 @@ func New(provider models.ProviderDeployment, agentDB string) (sdk.Pack, map[stri
 	config := &Config{userspace: userspace}
 	config.SetDefaults()
 	config.RegistrationPath = filepath.Join(agentDB, "providers.d", "awg.conf")
+	files := make(map[string]any, len(config.Files))
+	for name, content := range config.Files {
+		files[name] = content
+	}
 	values := map[string]any{
-		"artifact":         provider.Artifact,
-		"files":            config.Files,
+		"files":            files,
 		"registrationPath": config.RegistrationPath,
 		"registry": map[string]any{
 			"protocolVersion": models.ProtocolVersion,

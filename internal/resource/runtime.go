@@ -26,6 +26,7 @@ import (
 	"reflect"
 	"sync"
 	"time"
+	"uuid"
 
 	"github.com/ks-tool/vpn-agent/v2/models"
 	"github.com/ks-tool/vpn-agent/v2/storage"
@@ -45,27 +46,27 @@ type queueKey struct {
 
 type Runtime struct {
 	store          Store
-	agentID        string
 	retryDelay     time.Duration
 	resyncInterval time.Duration
 
-	mu          sync.RWMutex
-	operationMu sync.Mutex
-	providers   map[string]Provider
-	pending     map[queueKey]bool
-	attempts    map[queueKey]int
-	subs        map[chan Event]struct{}
-	queue       chan queueKey
-	ctx         context.Context
-	cancel      context.CancelFunc
-	started     bool
-	wg          sync.WaitGroup
+	mu             sync.RWMutex
+	operationMu    sync.Mutex
+	providers      map[string]Provider
+	providerErrors map[string]string
+	pending        map[queueKey]bool
+	attempts       map[queueKey]int
+	subs           map[chan Event]struct{}
+	queue          chan queueKey
+	ctx            context.Context
+	cancel         context.CancelFunc
+	started        bool
+	wg             sync.WaitGroup
 }
 
-func NewRuntime(store Store, agentID string, retryDelay, resyncInterval time.Duration) *Runtime {
+func NewRuntime(store Store, retryDelay, resyncInterval time.Duration) *Runtime {
 	return &Runtime{
-		store: store, agentID: agentID, retryDelay: retryDelay, resyncInterval: resyncInterval,
-		providers: make(map[string]Provider), pending: make(map[queueKey]bool),
+		store: store, retryDelay: retryDelay, resyncInterval: resyncInterval,
+		providers: make(map[string]Provider), providerErrors: make(map[string]string), pending: make(map[queueKey]bool),
 		attempts: make(map[queueKey]int), subs: make(map[chan Event]struct{}),
 		queue: make(chan queueKey, 1024),
 	}
@@ -81,12 +82,14 @@ func (r *Runtime) Register(provider Provider) error {
 		return fmt.Errorf("provider %q is already registered", provider.Name())
 	}
 	r.providers[provider.Name()] = provider
+	delete(r.providerErrors, provider.Name())
 	return nil
 }
 
 func (r *Runtime) Unregister(name string) {
 	r.mu.Lock()
 	delete(r.providers, name)
+	delete(r.providerErrors, name)
 	r.mu.Unlock()
 }
 
@@ -128,13 +131,29 @@ func (r *Runtime) Close() {
 func (r *Runtime) Manifest() models.Manifest {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	manifest := models.Manifest{ProtocolVersion: models.ProtocolVersion, AgentID: r.agentID, Providers: make([]models.ProviderDefinition, 0, len(r.providers))}
+	manifest := models.Manifest{ProtocolVersion: models.ProtocolVersion, Providers: make([]models.ProviderDefinition, 0, len(r.providers))}
 	for _, provider := range r.providers {
 		manifest.Providers = append(manifest.Providers, models.ProviderDefinition{
 			Name: provider.Name(), Version: provider.Version(), Resources: provider.Definitions(),
 		})
 	}
+	if len(r.providerErrors) > 0 {
+		manifest.ProviderErrors = make(map[string]string, len(r.providerErrors))
+		for name, message := range r.providerErrors {
+			manifest.ProviderErrors[name] = message
+		}
+	}
 	return manifest
+}
+
+func (r *Runtime) SetProviderError(name string, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err == nil {
+		delete(r.providerErrors, name)
+		return
+	}
+	r.providerErrors[name] = err.Error()
 }
 
 func (r *Runtime) Schema(name string) (models.ProviderDefinition, error) {
@@ -213,10 +232,7 @@ func (r *Runtime) Put(providerName, kind, name string, desired models.Resource) 
 		desired.Status.Phase = models.ResourcePending
 	} else {
 		if desired.ID == "" {
-			desired.ID, err = randomID()
-			if err != nil {
-				return models.Resource{}, err
-			}
+			desired.ID = uuid.New().String()
 		}
 		desired.Generation = 1
 		desired.Status = models.ResourceStatus{Phase: models.ResourcePending}

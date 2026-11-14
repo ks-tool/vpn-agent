@@ -26,10 +26,12 @@ import (
 	"strings"
 	"testing"
 
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
+
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
 	"github.com/ks-tool/vpn-agent/v2/models"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/storage/fs"
 	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
-	"github.com/ks-tool/vpn-agent/v2/storage/fs"
 )
 
 type linkSide struct {
@@ -37,7 +39,7 @@ type linkSide struct {
 	store    *fs.Dir
 	network  *fakeNetwork
 	endpoint models.LinkEndpoint
-	key      models.Key
+	key      awgmodels.Key
 }
 
 func TestDistributedLinkPrepareCommitRetryAndDelete(t *testing.T) {
@@ -119,10 +121,10 @@ func newLinkSide(t *testing.T, serverID, resourceID, address string, obfuscation
 	privateKey := mustPeerKey(t)
 	userKey := mustPeerKey(t)
 	jc := 3
-	legacy := models.InterfaceConfig{Interface: "awg0", Address: "10.0.0.1/24", ListenPort: 51820, PrivateKey: privateKey, Peers: []models.InterfacePeer{}}
+	legacy := awgmodels.InterfaceConfig{Interface: "awg0", Address: "10.0.0.1/24", ListenPort: 51820, PrivateKey: privateKey, Peers: []awgmodels.InterfacePeer{}}
 	if obfuscation {
 		legacy.Jc = &jc
-		legacy.Peers = append(legacy.Peers, models.InterfacePeer{Key: userKey.PublicKey(), AllowedIPs: []string{"10.0.0.10/32"}})
+		legacy.Peers = append(legacy.Peers, awgmodels.InterfacePeer{Key: userKey.PublicKey(), AllowedIPs: []string{"10.0.0.10/32"}})
 	}
 	if err := store.Set(&legacy); err != nil {
 		t.Fatal(err)
@@ -160,7 +162,7 @@ func TestDeleteMigratedLegacyLinkWithoutState(t *testing.T) {
 		"ip route replace default dev %i table 100",
 	}
 	legacy.PostDown = []string{"ip route del default dev %i table 100 2>/dev/null || true"}
-	legacy.Peers = append(legacy.Peers, models.InterfacePeer{Key: target.key.PublicKey(), AllowedIPs: []string{"0.0.0.0/0"}})
+	legacy.Peers = append(legacy.Peers, awgmodels.InterfacePeer{Key: target.key.PublicKey(), AllowedIPs: []string{"0.0.0.0/0"}})
 	if err := source.store.Set(legacy); err != nil {
 		t.Fatal(err)
 	}

@@ -45,7 +45,7 @@ func TestSocksUDPAssociateReturnsUsableRelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer echo.Close()
+	defer func() { _ = echo.Close() }()
 	echoResult := make(chan error, 1)
 	go func() {
 		buffer := make([]byte, 64)
@@ -60,7 +60,7 @@ func TestSocksUDPAssociateReturnsUsableRelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	network := directSocksNetwork{dialed: make(chan string, 1)}
@@ -78,7 +78,7 @@ func TestSocksUDPAssociateReturnsUsableRelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	if err := client.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestSocksUDPAssociateReturnsUsableRelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer udpClient.Close()
+	defer func() { _ = udpClient.Close() }()
 	payload := []byte("udp-through-socks")
 	packet, err := encodeUDPPacket(echo.LocalAddr().String(), payload)
 	if err != nil {
@@ -156,7 +156,7 @@ func TestSocksUDPAssociateReturnsUsableRelay(t *testing.T) {
 		t.Fatalf("echoed payload = %q, want %q", echoed, payload)
 	}
 	cancel()
-	client.Close()
+	_ = client.Close()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):

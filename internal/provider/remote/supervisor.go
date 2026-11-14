@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,6 +37,51 @@ type supervisedProvider struct {
 	registration models.ProviderRegistration
 	cancel       context.CancelFunc
 	done         chan struct{}
+
+	mu      sync.RWMutex
+	exitErr error
+	output  string
+}
+
+func (p *supervisedProvider) recordError(err error, output string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.exitErr, p.output = err, output
+}
+
+func (p *supervisedProvider) lastError() error {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.exitErr == nil {
+		return nil
+	}
+	if len(p.output) > 0 {
+		return fmt.Errorf("%w\n%s", p.exitErr, p.output)
+	}
+	return p.exitErr
+}
+
+const providerOutputLimit = 16 << 10
+
+type outputTail struct {
+	mu   sync.Mutex
+	data []byte
+}
+
+func (b *outputTail) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.data = append(b.data, p...)
+	if len(b.data) > providerOutputLimit {
+		b.data = append([]byte(nil), b.data[len(b.data)-providerOutputLimit:]...)
+	}
+	return len(p), nil
+}
+
+func (b *outputTail) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.data)
 }
 
 type Supervisor struct {
@@ -74,6 +120,16 @@ func (s *Supervisor) Reload(registrations []models.ProviderRegistration) error {
 	return s.reloadLocked(registrations)
 }
 
+func (s *Supervisor) ProviderError(name string) error {
+	s.mu.Lock()
+	provider := s.providers[name]
+	s.mu.Unlock()
+	if provider == nil {
+		return nil
+	}
+	return provider.lastError()
+}
+
 func (s *Supervisor) reloadLocked(registrations []models.ProviderRegistration) error {
 	desired := make(map[string]models.ProviderRegistration, len(registrations))
 	for _, registration := range registrations {
@@ -106,7 +162,7 @@ func (s *Supervisor) reloadLocked(registrations []models.ProviderRegistration) e
 		current := &supervisedProvider{registration: registration, cancel: cancel, done: make(chan struct{})}
 		s.providers[name] = current
 		s.wg.Add(1)
-		go s.supervise(ctx, registration, current.done)
+		go s.supervise(ctx, current)
 	}
 	return nil
 }
@@ -125,21 +181,24 @@ func (s *Supervisor) Close() {
 	s.wg.Wait()
 }
 
-func (s *Supervisor) supervise(ctx context.Context, registration models.ProviderRegistration, stopped chan<- struct{}) {
+func (s *Supervisor) supervise(ctx context.Context, current *supervisedProvider) {
 	defer s.wg.Done()
-	defer close(stopped)
+	defer close(current.done)
+	registration := current.registration
 	name := registration.Provider.Name
 	for ctx.Err() == nil {
+		output := &outputTail{}
 		cmd := exec.Command(registration.Command, registration.Args...)
 		cmd.Env = os.Environ()
 		for key, value := range registration.Env {
 			cmd.Env = append(cmd.Env, key+"="+value)
 		}
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = io.MultiWriter(os.Stdout, output)
+		cmd.Stderr = io.MultiWriter(os.Stderr, output)
 
 		done := make(chan error, 1)
 		if err := cmd.Start(); err != nil {
+			current.recordError(fmt.Errorf("start provider: %w", err), output.String())
 			log.Error().Err(err).Str("provider", name).Str("command", registration.Command).Msg("failed to start provider")
 		} else {
 			log.Info().Str("provider", name).Int("pid", cmd.Process.Pid).Msg("provider started")
@@ -149,7 +208,11 @@ func (s *Supervisor) supervise(ctx context.Context, registration models.Provider
 				stopProcess(cmd, done)
 				return
 			case err := <-done:
-				if err != nil && !errors.Is(err, context.Canceled) {
+				if err == nil {
+					err = errors.New("provider exited")
+				}
+				current.recordError(err, output.String())
+				if !errors.Is(err, context.Canceled) {
 					log.Error().Err(err).Str("provider", name).Msg("provider exited; restarting")
 				} else {
 					log.Warn().Str("provider", name).Msg("provider exited; restarting")
@@ -168,10 +231,15 @@ func (s *Supervisor) supervise(ctx context.Context, registration models.Provider
 func stopProcess(cmd *exec.Cmd, done <-chan error) {
 	_ = cmd.Process.Signal(syscall.SIGTERM)
 	select {
-	case <-done:
+	case err := <-done:
+		_ = err
 		return
 	case <-time.After(5 * time.Second):
 		_ = cmd.Process.Kill()
-		<-done
+		waitErr := <-done
+		var exitErr *exec.ExitError
+		if waitErr != nil && !errors.As(waitErr, &exitErr) {
+			log.Warn().Err(waitErr).Msg("failed to wait for stopped provider")
+		}
 	}
 }

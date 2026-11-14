@@ -40,7 +40,7 @@ type Config struct {
 }
 
 func Run(adapter Adapter, version, prefix, defaultCore string) {
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339, NoColor: true})
 	handled, deployErr := DeployCommand(os.Args[1:], func(ctx context.Context, path string) error {
 		return DeployProvider(ctx, adapter, path)
 	})
@@ -66,10 +66,6 @@ func Run(adapter Adapter, version, prefix, defaultCore string) {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to initialize resource storage")
 	}
-	agentID, err := resourceStore.AgentID()
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to initialize provider identity")
-	}
 	provider, err := New(adapter, version, resourceStore, cfg.DB, cfg.Core)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to initialize provider")
@@ -77,7 +73,7 @@ func Run(adapter Adapter, version, prefix, defaultCore string) {
 	log.Info().Str("provider", adapter.Name()).Str("version", version).Str("addr", cfg.Addr).Msg("starting provider API")
 	if err := Serve(ServeOptions{
 		Addr: cfg.Addr, TLSCert: cfg.TLSCert, TLSKey: cfg.TLSKey, TLSClientCA: cfg.TLSClientCA,
-		Store: resourceStore, AgentID: agentID, Provider: provider, Start: provider.RestoreLinks, Close: provider.Close,
+		Store: resourceStore, Provider: provider, Start: provider.RestoreLinks, Close: provider.Close,
 	}); err != nil {
 		log.Fatal().Err(err).Msg("provider API failed")
 	}

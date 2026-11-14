@@ -28,11 +28,15 @@ type fakeFirewallSystem struct {
 	backend     string
 	queryExists bool
 	commands    []string
+	runs        []string
 	content     string
+	inputRules  string
 }
 
 func (f *fakeFirewallSystem) Run(name string, args ...string) error {
-	f.commands = append(f.commands, name+" "+strings.Join(args, " "))
+	command := name + " " + strings.Join(args, " ")
+	f.commands = append(f.commands, command)
+	f.runs = append(f.runs, command)
 	return nil
 }
 
@@ -50,11 +54,58 @@ func (f *fakeFirewallSystem) Output(name string, args ...string) (string, error)
 		}
 		return "Status: inactive", nil
 	}
+	if command == "iptables -S INPUT" {
+		return f.inputRules, nil
+	}
 	f.commands = append(f.commands, command)
 	if f.queryExists {
 		return "yes", nil
 	}
 	return "", errors.New("rule not found")
+}
+
+func TestIptablesInputRulePrecedesTerminalReject(t *testing.T) {
+	rule := netfilterRule{table: "filter", chain: "INPUT", args: []string{"-i", "awg0", "-j", "ACCEPT"}}
+	rules := `-P INPUT ACCEPT
+-A INPUT -i lo -j ACCEPT
+-A INPUT -d 127.0.0.0/8 ! -i lo -j REJECT --reject-with icmp-port-unreachable
+-A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -p tcp -m state --state NEW -m tcp --dport 22567 -j ACCEPT
+-A INPUT -p udp -m state --state NEW -m udp --dport 22567 -j ACCEPT
+-A INPUT -p icmp -j ACCEPT
+-A INPUT -j REJECT --reject-with icmp-port-unreachable
+`
+	for _, test := range []struct {
+		name       string
+		inputRules string
+		want       string
+	}{
+		{name: "missing", inputRules: rules, want: "iptables -I INPUT 7 -i awg0 -j ACCEPT"},
+		{name: "after reject", inputRules: rules + "-A INPUT -i awg0 -j ACCEPT\n", want: "iptables -D INPUT -i awg0 -j ACCEPT\niptables -I INPUT 7 -i awg0 -j ACCEPT"},
+		{name: "before reject", inputRules: "-P INPUT ACCEPT\n-A INPUT -i awg0 -j ACCEPT\n-A INPUT -j REJECT --reject-with icmp-port-unreachable\n"},
+		{name: "without reject", inputRules: "-P INPUT ACCEPT\n-A INPUT -i lo -j ACCEPT\n", want: "iptables -A INPUT -i awg0 -j ACCEPT"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			system := &fakeFirewallSystem{inputRules: test.inputRules}
+			if err := applyIptablesRule(system, rule, true); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(system.runs, "\n"); got != test.want {
+				t.Fatalf("commands = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestIptablesInputRuleRecognizesProtocolModule(t *testing.T) {
+	system := &fakeFirewallSystem{inputRules: "-P INPUT ACCEPT\n-A INPUT -p udp -m udp --dport 22567 -j ACCEPT\n-A INPUT -j REJECT --reject-with icmp-port-unreachable\n"}
+	rule := netfilterRule{table: "filter", chain: "INPUT", args: []string{"-p", "udp", "--dport", "22567", "-j", "ACCEPT"}}
+	if err := applyIptablesRule(system, rule, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(system.runs) != 0 {
+		t.Fatalf("normalized UDP rule was added again: %v", system.runs)
+	}
 }
 
 func (f *fakeFirewallSystem) ReadFile(string) ([]byte, error) {

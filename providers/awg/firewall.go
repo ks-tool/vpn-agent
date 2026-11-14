@@ -27,7 +27,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ks-tool/vpn-agent/v2/models"
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
 )
 
 const firewallExecutable = "/usr/local/bin/vpn-provider-awg"
@@ -88,11 +88,11 @@ func firewallHook(kind, action string, listenPort uint16, mark string) string {
 	return command
 }
 
-func interfaceFirewallHooks(cfg models.InterfaceConfig) (string, string) {
+func interfaceFirewallHooks(cfg awgmodels.InterfaceConfig) (string, string) {
 	return firewallHook("interface", "add", cfg.ListenPort, ""), firewallHook("interface", "remove", cfg.ListenPort, "")
 }
 
-func replaceInterfaceFirewallHooks(cfg *models.InterfaceConfig) {
+func replaceInterfaceFirewallHooks(cfg *awgmodels.InterfaceConfig) {
 	cfg.PreUp = removeInterfaceFirewallHooks(cfg.PreUp)
 	cfg.PostDown = removeInterfaceFirewallHooks(cfg.PostDown)
 	up, down := interfaceFirewallHooks(*cfg)
@@ -326,6 +326,9 @@ func applyUFWNetfilterRule(system firewallSystem, rule netfilterRule, add bool) 
 }
 
 func applyIptablesRule(system firewallSystem, rule netfilterRule, add bool) error {
+	if add && rule.table == "filter" && rule.chain == "INPUT" {
+		return applyIptablesInputRule(system, rule)
+	}
 	check := []string{"-t", rule.table, "-C", rule.chain}
 	check = append(check, rule.args...)
 	_, queryErr := system.Output("iptables", check...)
@@ -339,6 +342,57 @@ func applyIptablesRule(system firewallSystem, rule netfilterRule, add bool) erro
 	command := []string{"-t", rule.table, action, rule.chain}
 	command = append(command, rule.args...)
 	return system.Run("iptables", command...)
+}
+
+func applyIptablesInputRule(system firewallSystem, rule netfilterRule) error {
+	output, err := system.Output("iptables", "-S", "INPUT")
+	if err != nil {
+		return err
+	}
+	rejectPosition, rulePosition, position := 0, 0, 0
+	for line := range strings.Lines(output) {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "-A" || fields[1] != "INPUT" {
+			continue
+		}
+		position++
+		if rulePosition == 0 && sameIptablesRule(fields[2:], rule.args) {
+			rulePosition = position
+			continue
+		}
+		if rejectPosition == 0 && len(fields) >= 4 && fields[2] == "-j" && (fields[3] == "REJECT" || fields[3] == "DROP") &&
+			(len(fields) == 4 || len(fields) == 6 && fields[4] == "--reject-with") {
+			rejectPosition = position
+		}
+	}
+	if rulePosition > 0 && (rejectPosition == 0 || rulePosition < rejectPosition) {
+		return nil
+	}
+	if rulePosition > 0 {
+		command := []string{"-D", "INPUT"}
+		command = append(command, rule.args...)
+		if err := system.Run("iptables", command...); err != nil {
+			return err
+		}
+	}
+	command := []string{"-A", "INPUT"}
+	if rejectPosition > 0 {
+		command = []string{"-I", "INPUT", strconv.Itoa(rejectPosition)}
+	}
+	command = append(command, rule.args...)
+	return system.Run("iptables", command...)
+}
+
+func sameIptablesRule(actual, desired []string) bool {
+	normalized := make([]string, 0, len(actual))
+	for i := 0; i < len(actual); i++ {
+		if actual[i] == "-m" && i+1 < len(actual) && (actual[i+1] == "tcp" || actual[i+1] == "udp") {
+			i++
+			continue
+		}
+		normalized = append(normalized, actual[i])
+	}
+	return slices.Equal(normalized, desired)
 }
 
 func setUFWNetfilterRule(content string, rule netfilterRule, add bool) (string, bool, bool) {

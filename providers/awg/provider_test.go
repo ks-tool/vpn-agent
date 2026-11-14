@@ -24,20 +24,22 @@ import (
 	"testing"
 	"time"
 
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
+
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
 	"github.com/ks-tool/vpn-agent/v2/models"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/storage/fs"
 	"github.com/ks-tool/vpn-agent/v2/storage"
-	"github.com/ks-tool/vpn-agent/v2/storage/fs"
 )
 
 type fakeNetwork struct {
 	mu       sync.Mutex
-	previous *models.InterfaceConfig
-	config   models.InterfaceConfig
+	previous *awgmodels.InterfaceConfig
+	config   awgmodels.InterfaceConfig
 	deleted  string
 }
 
-func (f *fakeNetwork) One(previous *models.InterfaceConfig, config models.InterfaceConfig) error {
+func (f *fakeNetwork) One(previous *awgmodels.InterfaceConfig, config awgmodels.InterfaceConfig) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.previous, f.config = previous, config
@@ -76,11 +78,8 @@ func TestInterfaceSchemaAndGenericLifecycle(t *testing.T) {
 		t.Fatalf("incomplete definition: %+v", definition)
 	}
 
-	resourceStore, err := resource.NewFileStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	runtime := resource.NewRuntime(resourceStore, "agent", time.Millisecond, time.Hour)
+	resourceStore := resource.NewMemoryStore()
+	runtime := resource.NewRuntime(resourceStore, time.Millisecond, time.Hour)
 	if err := runtime.Register(provider); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +93,7 @@ func TestInterfaceSchemaAndGenericLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForProviderStatus(t, runtime, models.ResourceReady)
-	if models.IsEmpty(network.config.PrivateKey) {
+	if awgmodels.IsEmpty(network.config.PrivateKey) {
 		t.Fatal("agent did not generate a private key")
 	}
 	up, down := interfaceFirewallHooks(network.config)
@@ -143,17 +142,17 @@ func TestReconcilePreservesLegacySecretsPeersAndHooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	privateKey, err := models.GeneratePrivateKey()
+	privateKey, err := awgmodels.GeneratePrivateKey()
 	if err != nil {
 		t.Fatal(err)
 	}
-	peerKey, err := models.GeneratePrivateKey()
+	peerKey, err := awgmodels.GeneratePrivateKey()
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy := models.InterfaceConfig{
+	legacy := awgmodels.InterfaceConfig{
 		Interface: "awg0", Address: "10.0.0.1/24", ListenPort: 51820, PrivateKey: privateKey,
-		Peers: []models.InterfacePeer{{Key: peerKey.PublicKey(), AllowedIPs: []string{"10.0.0.2/32"}}},
+		Peers: []awgmodels.InterfacePeer{{Key: peerKey.PublicKey(), AllowedIPs: []string{"10.0.0.2/32"}}},
 		PreUp: []string{"pre-up"}, PostUp: []string{"post-up"}, PreDown: []string{"pre-down"}, PostDown: []string{"post-down"},
 	}
 	if err := store.Set(&legacy); err != nil {
@@ -188,7 +187,7 @@ func TestInterfaceValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	existing := models.InterfaceConfig{Interface: "awg-existing", Address: "10.0.0.1/24", ListenPort: 51820}
+	existing := awgmodels.InterfaceConfig{Interface: "awg-existing", Address: "10.0.0.1/24", ListenPort: 51820}
 	if err := store.Set(&existing); err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +245,7 @@ func TestInterfaceSecretMigrationPreservesKeysHooksAndZeroListenPort(t *testing.
 	if err := provider.Validate(context.Background(), item); err != nil {
 		t.Fatalf("zero listen port was rejected: %v", err)
 	}
-	privateKey, err := models.GeneratePrivateKey()
+	privateKey, err := awgmodels.GeneratePrivateKey()
 	if err != nil {
 		t.Fatal(err)
 	}

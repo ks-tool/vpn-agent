@@ -65,7 +65,7 @@ func (Adapter) NewSecret() (string, error) { return uuid.NewV4().String(), nil }
 
 func (Adapter) ValidateSecret(secret string) error {
 	if _, err := uuid.Parse(secret); err != nil {
-		return errors.New("Xray client secret must be a UUID")
+		return errors.New("xray client secret must be a UUID")
 	}
 	return nil
 }

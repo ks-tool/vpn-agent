@@ -42,7 +42,7 @@ func TestExternalProviderLifecycleCrashAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	externalRuntime := resource.NewRuntime(externalStore, "external", time.Millisecond, time.Hour)
+	externalRuntime := resource.NewRuntime(externalStore, time.Millisecond, time.Hour)
 	if err := externalRuntime.Register(exampleProvider); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestExternalProviderLifecycleCrashAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	core := resource.NewRuntime(coreStore, "core", time.Millisecond, time.Hour)
+	core := resource.NewRuntime(coreStore, time.Millisecond, time.Hour)
 	if err := core.Register(remote); err != nil {
 		t.Fatal(err)
 	}
@@ -98,13 +98,36 @@ func TestExternalProviderLifecycleCrashAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	core = resource.NewRuntime(coreStore, "core", time.Millisecond, time.Hour)
+	core = resource.NewRuntime(coreStore, time.Millisecond, time.Hour)
 	if err := core.Register(remote); err != nil {
 		t.Fatal(err)
 	}
 	core.Start(context.Background())
 	defer core.Close()
 	waitRemoteStatus(t, core, "offline", models.ResourceReady)
+}
+
+func TestProviderDefaultClientAllowsLongLinkCommit(t *testing.T) {
+	definition := models.ProviderDefinition{Name: "example", Version: "1"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/manifest" {
+			_ = json.NewEncoder(w).Encode(models.Manifest{ProtocolVersion: models.ProtocolVersion, Providers: []models.ProviderDefinition{definition}})
+			return
+		}
+		time.Sleep(3100 * time.Millisecond)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+	provider, err := NewProvider(server.URL, definition, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	link := models.Link{ID: "link", Source: models.LinkEndpoint{ResourceID: "source"}, Target: models.LinkEndpoint{ResourceID: "target"}}
+	if err := provider.CommitLink(ctx, link, link.Source, models.LinkOffer{}); err != nil {
+		t.Fatalf("long link commit: %v", err)
+	}
 }
 
 func TestRemoteDeleteReportsPhysicalDeletionFailure(t *testing.T) {
@@ -208,7 +231,7 @@ func TestRemoteProtocolVersionIsCheckedBeforeMutation(t *testing.T) {
 	mutations := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/manifest" {
-			_ = json.NewEncoder(w).Encode(models.Manifest{ProtocolVersion: "v2", AgentID: "external"})
+			_ = json.NewEncoder(w).Encode(models.Manifest{ProtocolVersion: "v2"})
 			return
 		}
 		mutations++

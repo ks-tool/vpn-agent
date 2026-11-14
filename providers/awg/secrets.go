@@ -17,86 +17,49 @@
 package awg
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"os"
-	"path/filepath"
+	"sync"
 
-	"github.com/ks-tool/vpn-agent/v2/models"
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
+
 	"github.com/ks-tool/vpn-agent/v2/storage"
 )
 
 type secretRecord struct {
-	Interface         string      `json:"interface"`
-	PrivateKey        models.Key  `json:"privateKey"`
-	PresharedKey      *models.Key `json:"presharedKey,omitempty"`
-	PreviousPublicKey string      `json:"previousPublicKey,omitempty"`
+	Interface         string         `json:"interface"`
+	PrivateKey        awgmodels.Key  `json:"privateKey"`
+	PresharedKey      *awgmodels.Key `json:"presharedKey,omitempty"`
+	PreviousPublicKey string         `json:"previousPublicKey,omitempty"`
 }
 
 type secretStore struct {
-	root string
+	mu      sync.RWMutex
+	records map[string]secretRecord
 }
 
-func newSecretStore(root string) (*secretStore, error) {
-	if err := os.MkdirAll(root, 0700); err != nil {
-		return nil, err
-	}
-	return &secretStore{root: root}, nil
+func newSecretStore() *secretStore {
+	return &secretStore{records: make(map[string]secretRecord)}
 }
 
 func (s *secretStore) get(resourceID string) (secretRecord, error) {
-	data, err := os.ReadFile(s.filename(resourceID))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return secretRecord{}, storage.ErrNotFound
-		}
-		return secretRecord{}, err
-	}
-	var record secretRecord
-	if err := json.Unmarshal(data, &record); err != nil {
-		return secretRecord{}, err
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	record, ok := s.records[resourceID]
+	if !ok {
+		return secretRecord{}, storage.ErrNotFound
 	}
 	return record, nil
 }
 
 func (s *secretStore) put(resourceID string, record secretRecord) error {
-	data, err := json.Marshal(record)
-	if err != nil {
-		return err
-	}
-	file, err := os.CreateTemp(s.root, ".key-*")
-	if err != nil {
-		return err
-	}
-	name := file.Name()
-	defer func() { _ = os.Remove(name) }()
-	if err := file.Chmod(0600); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, s.filename(resourceID))
-}
-
-func (s *secretStore) delete(resourceID string) error {
-	if err := os.Remove(s.filename(resourceID)); err != nil && !os.IsNotExist(err) {
-		return err
-	}
+	s.mu.Lock()
+	s.records[resourceID] = record
+	s.mu.Unlock()
 	return nil
 }
 
-func (s *secretStore) filename(resourceID string) string {
-	sum := sha256.Sum256([]byte(resourceID))
-	return filepath.Join(s.root, hex.EncodeToString(sum[:])+".secret")
+func (s *secretStore) delete(resourceID string) error {
+	s.mu.Lock()
+	delete(s.records, resourceID)
+	s.mu.Unlock()
+	return nil
 }

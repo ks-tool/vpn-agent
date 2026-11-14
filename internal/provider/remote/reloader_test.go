@@ -31,11 +31,12 @@ import (
 
 type reloaderRuntime struct {
 	providers map[string]resource.Provider
+	errors    map[string]string
 	resyncs   int
 }
 
 func (r *reloaderRuntime) Manifest() models.Manifest {
-	manifest := models.Manifest{ProtocolVersion: models.ProtocolVersion}
+	manifest := models.Manifest{ProtocolVersion: models.ProtocolVersion, ProviderErrors: r.errors}
 	for _, provider := range r.providers {
 		manifest.Providers = append(manifest.Providers, models.ProviderDefinition{Name: provider.Name(), Version: provider.Version(), Resources: provider.Definitions()})
 	}
@@ -43,10 +44,21 @@ func (r *reloaderRuntime) Manifest() models.Manifest {
 }
 func (r *reloaderRuntime) Register(provider resource.Provider) error {
 	r.providers[provider.Name()] = provider
+	delete(r.errors, provider.Name())
 	return nil
 }
 func (r *reloaderRuntime) Unregister(name string) { delete(r.providers, name) }
-func (r *reloaderRuntime) Resync()                { r.resyncs++ }
+func (r *reloaderRuntime) SetProviderError(name string, err error) {
+	if r.errors == nil {
+		r.errors = map[string]string{}
+	}
+	if err == nil {
+		delete(r.errors, name)
+		return
+	}
+	r.errors[name] = err.Error()
+}
+func (r *reloaderRuntime) Resync() { r.resyncs++ }
 
 func TestReloaderAddsUpdatesAndRemovesProviders(t *testing.T) {
 	dir := t.TempDir()
@@ -149,5 +161,30 @@ func TestReloaderDiscoversAddedProvider(t *testing.T) {
 	manifest := runtime.Manifest()
 	if len(manifest.Providers) != 1 || len(manifest.Providers[0].Resources) != 1 {
 		t.Fatalf("discovered provider is missing from manifest: %+v", manifest.Providers)
+	}
+}
+
+func TestReloaderReportsProviderLoadError(t *testing.T) {
+	dir := t.TempDir()
+	registration := models.ProviderRegistration{Address: "invalid", Provider: models.ProviderDefinition{Name: "awg", Version: "1"}}
+	data, err := json.Marshal(Config{ProtocolVersion: models.ProtocolVersion, Providers: []models.ProviderRegistration{registration}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "awg.conf"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	supervisor := NewSupervisor(nil)
+	if err := supervisor.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer supervisor.Close()
+	runtime := &reloaderRuntime{providers: make(map[string]resource.Provider)}
+	reloader := NewReloader(dir, filepath.Join(t.TempDir(), "providers.conf"), supervisor, runtime, nil)
+	if err := reloader.Reload(); err == nil {
+		t.Fatal("invalid registration returned no error")
+	}
+	if len(runtime.Manifest().ProviderErrors["awg"]) == 0 {
+		t.Fatal("provider load error is missing from manifest")
 	}
 }

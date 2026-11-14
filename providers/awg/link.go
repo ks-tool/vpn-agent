@@ -28,16 +28,18 @@ import (
 	"strings"
 	"time"
 
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
+
 	"github.com/ks-tool/vpn-agent/v2/models"
 	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
 	"github.com/ks-tool/vpn-agent/v2/storage"
 )
 
 type awgLinkOffer struct {
-	PublicKey string                `json:"publicKey"`
-	Interface InterfaceSpec         `json:"interface"`
-	Driver    *models.RouteDriver   `json:"driver,omitempty"`
-	RoutePeer *models.InterfacePeer `json:"routePeer,omitempty"`
+	PublicKey string                   `json:"publicKey"`
+	Interface InterfaceSpec            `json:"interface"`
+	Driver    *models.RouteDriver      `json:"driver,omitempty"`
+	RoutePeer *awgmodels.InterfacePeer `json:"routePeer,omitempty"`
 }
 
 func (p *Provider) PrepareLink(_ context.Context, link models.Link, endpoint models.LinkEndpoint) (models.LinkOffer, error) {
@@ -77,7 +79,7 @@ func (p *Provider) CommitLink(_ context.Context, link models.Link, endpoint mode
 	if err := json.Unmarshal(remote.Data, &remoteSpec); err != nil {
 		return err
 	}
-	remotePublicKey, err := models.ParseKey(remoteSpec.PublicKey)
+	remotePublicKey, err := awgmodels.ParseKey(remoteSpec.PublicKey)
 	if err != nil {
 		return err
 	}
@@ -90,7 +92,7 @@ func (p *Provider) CommitLink(_ context.Context, link models.Link, endpoint mode
 		return err
 	}
 	cfg := *old
-	cfg.Peers = append([]models.InterfacePeer(nil), old.Peers...)
+	cfg.Peers = append([]awgmodels.InterfacePeer(nil), old.Peers...)
 	cfg.PreUp = append([]string(nil), old.PreUp...)
 	cfg.PostUp = append([]string(nil), old.PostUp...)
 	cfg.PreDown = append([]string(nil), old.PreDown...)
@@ -128,7 +130,7 @@ func (p *Provider) CommitLink(_ context.Context, link models.Link, endpoint mode
 	sum := sha256.Sum256([]byte(link.ID))
 	table := proxy.RouteTable(routeID)
 	state := linkState{LinkID: link.ID, Interface: spec.Interface, Role: role, PeerPublicKey: remoteSpec.PublicKey, Table: table, Priority: table}
-	peer := models.InterfacePeer{Key: remotePublicKey, Endpoint: remoteEndpoint(remote), KeepaliveInterval: 25 * time.Second}
+	peer := awgmodels.InterfacePeer{Key: remotePublicKey, Endpoint: remoteEndpoint(remote), KeepaliveInterval: 25 * time.Second}
 	if role == "source" {
 		remoteIP, _, err := net.ParseCIDR(remoteSpec.Interface.Address)
 		if err != nil {
@@ -213,7 +215,7 @@ func (p *Provider) DeleteLink(_ context.Context, link models.Link, endpoint mode
 		return err
 	}
 	cfg := *old
-	cfg.Peers = append([]models.InterfacePeer(nil), old.Peers...)
+	cfg.Peers = append([]awgmodels.InterfacePeer(nil), old.Peers...)
 	cfg.PreUp = append([]string(nil), old.PreUp...)
 	cfg.PostDown = append([]string(nil), old.PostDown...)
 	if legacy {
@@ -248,8 +250,8 @@ func remoteEndpoint(remote models.LinkOffer) string {
 	return net.JoinHostPort(remote.Endpoint.Address, strconv.Itoa(int(offer.Interface.ListenPort)))
 }
 
-func removeLinkArtifacts(cfg *models.InterfaceConfig, state linkState) {
-	peers := make([]models.InterfacePeer, 0, len(cfg.Peers))
+func removeLinkArtifacts(cfg *awgmodels.InterfaceConfig, state linkState) {
+	peers := make([]awgmodels.InterfacePeer, 0, len(cfg.Peers))
 	for _, peer := range cfg.Peers {
 		if peer.Key.String() != state.PeerPublicKey {
 			peers = append(peers, peer)
@@ -263,8 +265,8 @@ func removeLinkArtifacts(cfg *models.InterfaceConfig, state linkState) {
 	}
 }
 
-func removeLegacyLinkArtifacts(cfg *models.InterfaceConfig, remotePublicKey string) {
-	peers := make([]models.InterfacePeer, 0, len(cfg.Peers))
+func removeLegacyLinkArtifacts(cfg *awgmodels.InterfaceConfig, remotePublicKey string) {
+	peers := make([]awgmodels.InterfacePeer, 0, len(cfg.Peers))
 	for _, peer := range cfg.Peers {
 		if peer.Key.String() != remotePublicKey {
 			peers = append(peers, peer)
@@ -307,7 +309,7 @@ func removeCommands(current, remove []string) []string {
 	return remaining
 }
 
-func copyLinkObfuscation(destination *models.InterfaceConfig, source models.InterfaceConfig) {
+func copyLinkObfuscation(destination *awgmodels.InterfaceConfig, source awgmodels.InterfaceConfig) {
 	destination.Jc, destination.Jmin, destination.Jmax = source.Jc, source.Jmin, source.Jmax
 	destination.S1, destination.S2, destination.S3, destination.S4 = source.S1, source.S2, source.S3, source.S4
 	destination.H1, destination.H2, destination.H3, destination.H4 = source.H1, source.H2, source.H3, source.H4

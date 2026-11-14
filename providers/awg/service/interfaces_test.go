@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ks-tool/vpn-agent/v2/models"
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
 )
 
 // recordingBackend is a no-op Backend that records the order of link operations
@@ -72,7 +72,7 @@ func TestInterfaceCreateBringsLinkUpBeforePreUp(t *testing.T) {
 	t.Cleanup(func() { SetBackend(prev) })
 
 	// A PreUp hook that only succeeds if the link is already up (marker exists).
-	cfg := models.InterfaceConfig{
+	cfg := awgmodels.InterfaceConfig{
 		Interface: "awg1",
 		Address:   "10.0.0.1/24",
 		PreUp:     []string{fmt.Sprintf("test -f %s", marker)},
@@ -104,7 +104,7 @@ func TestInterfaceUpdateSkipsUnchangedHooks(t *testing.T) {
 
 	hookMarker := filepath.Join(dir, "hooks-ran")
 	hook := fmt.Sprintf("touch %q", hookMarker)
-	cfg := models.InterfaceConfig{
+	cfg := awgmodels.InterfaceConfig{
 		Interface: "awg1",
 		Address:   "10.0.0.1/24",
 		PreUp:     []string{hook},
@@ -132,7 +132,7 @@ func TestInterfaceUpdateReconcilesChangedHooks(t *testing.T) {
 	record := func(name string) string {
 		return fmt.Sprintf("printf '%s\\n' >> %q", name, trace)
 	}
-	prev := models.InterfaceConfig{
+	prev := awgmodels.InterfaceConfig{
 		Interface: "awg1",
 		Address:   "10.0.0.1/24",
 		PreUp:     []string{record("old-pre-up")},
@@ -168,7 +168,7 @@ func TestInterfaceUpdateDoesNotRerunUpHooksForDownHookChange(t *testing.T) {
 	record := func(name string) string {
 		return fmt.Sprintf("printf '%s\\n' >> %q", name, trace)
 	}
-	prev := models.InterfaceConfig{
+	prev := awgmodels.InterfaceConfig{
 		Interface: "awg1",
 		Address:   "10.0.0.1/24",
 		PreUp:     []string{record("pre-up")},
@@ -198,7 +198,7 @@ func TestInterfaceUpdateRunsUpHooksWithoutPreviousConfig(t *testing.T) {
 	record := func(name string) string {
 		return fmt.Sprintf("printf '%s\\n' >> %q", name, trace)
 	}
-	cfg := models.InterfaceConfig{
+	cfg := awgmodels.InterfaceConfig{
 		Interface: "awg1",
 		Address:   "10.0.0.1/24",
 		PreUp:     []string{record("pre-up")},

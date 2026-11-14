@@ -29,6 +29,9 @@ import (
 	"regexp"
 	"strings"
 
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
+	awgstorage "github.com/ks-tool/vpn-agent/v2/providers/awg/storage"
+
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
 	"github.com/ks-tool/vpn-agent/v2/models"
 	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
@@ -41,7 +44,7 @@ import (
 var interfaceName = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 
 type Network interface {
-	One(*models.InterfaceConfig, models.InterfaceConfig) error
+	One(*awgmodels.InterfaceConfig, awgmodels.InterfaceConfig) error
 	Delete(string) error
 }
 
@@ -55,7 +58,7 @@ type interfaceSecretArguments struct {
 
 type Provider struct {
 	version        string
-	store          storage.Storage
+	store          awgstorage.Storage
 	resources      resource.Store
 	secrets        *secretStore
 	links          *linkStore
@@ -67,16 +70,13 @@ type Provider struct {
 	peerValidator  *packschemavalidator.Compiled
 }
 
-func New(store storage.Storage, secretsRoot string, network Network, version string, inventory ...resource.Store) (*Provider, error) {
-	secrets, err := newSecretStore(secretsRoot)
+func New(store awgstorage.Storage, stateRoot string, network Network, version string, inventory ...resource.Store) (*Provider, error) {
+	secrets := newSecretStore()
+	links, err := newLinkStore(filepath.Join(stateRoot, "links"))
 	if err != nil {
 		return nil, err
 	}
-	links, err := newLinkStore(filepath.Join(filepath.Dir(secretsRoot), "links"))
-	if err != nil {
-		return nil, err
-	}
-	connectors, err := proxy.NewConnectorManager(filepath.Join(filepath.Dir(secretsRoot), "connectors"))
+	connectors, err := proxy.NewConnectorManager(filepath.Join(stateRoot, "connectors"))
 	if err != nil {
 		return nil, err
 	}
@@ -170,15 +170,7 @@ func (p *Provider) reconcileInterface(_ context.Context, resource models.Resourc
 	if err != nil {
 		return nil, err
 	}
-	state, stateErr := p.secrets.get(resource.ID)
-	if stateErr != nil && !storage.IsNotFound(stateErr) {
-		return nil, stateErr
-	}
-	if stateErr == nil && state.Interface != spec.Interface {
-		return nil, errors.New("interface name is immutable; create a new resource")
-	}
-
-	var previous *models.InterfaceConfig
+	var previous *awgmodels.InterfaceConfig
 	old, err := p.store.Get(spec.Interface)
 	if err == nil {
 		previous = old
@@ -201,11 +193,8 @@ func (p *Provider) reconcileInterface(_ context.Context, resource models.Resourc
 		}
 	}
 	replaceInterfaceFirewallHooks(&cfg)
-	if models.IsEmpty(cfg.PrivateKey) && stateErr == nil {
-		cfg.PrivateKey = state.PrivateKey
-	}
-	if models.IsEmpty(cfg.PrivateKey) {
-		cfg.PrivateKey, err = models.GeneratePrivateKey()
+	if awgmodels.IsEmpty(cfg.PrivateKey) {
+		cfg.PrivateKey, err = awgmodels.GeneratePrivateKey()
 		if err != nil {
 			return nil, err
 		}
@@ -216,14 +205,11 @@ func (p *Provider) reconcileInterface(_ context.Context, resource models.Resourc
 	if err := p.store.Set(&cfg); err != nil {
 		return nil, err
 	}
-	if err := p.secrets.put(resource.ID, secretRecord{Interface: spec.Interface, PrivateKey: cfg.PrivateKey}); err != nil {
-		return nil, err
-	}
 	status, err := json.Marshal(map[string]any{"interface": cfg.Interface, "publicKey": publicKeyString(cfg.PrivateKey)})
 	return status, err
 }
 
-func publicKeyString(privateKey models.Key) string {
+func publicKeyString(privateKey awgmodels.Key) string {
 	publicKey := privateKey.PublicKey()
 	return publicKey.String()
 }
@@ -233,7 +219,7 @@ func (p *Provider) importInterfaceSecret(item models.Resource, rawArguments json
 	if err := json.Unmarshal(rawArguments, &arguments); err != nil {
 		return models.ActionResult{}, err
 	}
-	privateKey, err := models.ParseKey(arguments.PrivateKey)
+	privateKey, err := awgmodels.ParseKey(arguments.PrivateKey)
 	if err != nil {
 		return models.ActionResult{}, err
 	}
@@ -241,7 +227,7 @@ func (p *Provider) importInterfaceSecret(item models.Resource, rawArguments json
 	if err != nil {
 		return models.ActionResult{}, err
 	}
-	var previous *models.InterfaceConfig
+	var previous *awgmodels.InterfaceConfig
 	cfg := spec.config()
 	old, err := p.store.Get(spec.Interface)
 	if err == nil {
@@ -259,9 +245,6 @@ func (p *Provider) importInterfaceSecret(item models.Resource, rawArguments json
 		return models.ActionResult{}, err
 	}
 	if err := p.store.Set(&cfg); err != nil {
-		return models.ActionResult{}, err
-	}
-	if err := p.secrets.put(item.ID, secretRecord{Interface: spec.Interface, PrivateKey: privateKey}); err != nil {
 		return models.ActionResult{}, err
 	}
 	return models.ActionResult{Type: models.ActionResultJSON, Data: json.RawMessage(`{"imported":true}`)}, nil
@@ -285,7 +268,7 @@ func (p *Provider) deleteInterface(_ context.Context, resource models.Resource) 
 	if err := p.store.Delete(spec.Interface); err != nil && !storage.IsNotFound(err) {
 		return err
 	}
-	return p.secrets.delete(resource.ID)
+	return nil
 }
 
 func (p *Provider) decode(raw json.RawMessage) (InterfaceSpec, error) {

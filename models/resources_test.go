@@ -75,7 +75,6 @@ func TestResourceWireFormatPreservesOpaqueSpecAndStatus(t *testing.T) {
 func TestManifestAndDefinitionsWireFormat(t *testing.T) {
 	manifest := Manifest{
 		ProtocolVersion: ProtocolVersion,
-		AgentID:         "agent-id",
 		Providers: []ProviderDefinition{{
 			Name:    "example",
 			Version: "1.2.3",

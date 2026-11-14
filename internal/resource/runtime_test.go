@@ -83,12 +83,8 @@ func TestRuntimeLifecycleRestartAndResync(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	agentID, err := store.AgentID()
-	if err != nil {
-		t.Fatal(err)
-	}
 	provider := &testProvider{failReconcile: 1, failDelete: 1}
-	runtime := NewRuntime(store, agentID, time.Millisecond, time.Hour)
+	runtime := NewRuntime(store, time.Millisecond, time.Hour)
 	if err := runtime.Register(provider); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +143,7 @@ func TestRuntimeLifecycleRestartAndResync(t *testing.T) {
 	runtime.Close()
 
 	restartedProvider := &testProvider{failDelete: 1}
-	restarted := NewRuntime(store, agentID, time.Millisecond, time.Hour)
+	restarted := NewRuntime(store, time.Millisecond, time.Hour)
 	if err := restarted.Register(restartedProvider); err != nil {
 		t.Fatal(err)
 	}
@@ -155,9 +151,6 @@ func TestRuntimeLifecycleRestartAndResync(t *testing.T) {
 	defer restarted.Close()
 	waitForApplies(t, restartedProvider, 1)
 	waitForStatus(t, restarted, 2, models.ResourceReady)
-	if id, err := store.AgentID(); err != nil || id != agentID {
-		t.Fatalf("agent id changed after restart: %q, %v", id, err)
-	}
 
 	if err := restarted.Delete("test", "Service", "public"); err != nil {
 		t.Fatal(err)
@@ -177,7 +170,7 @@ func TestRuntimeRetainsDesiredStateAndErrorStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &testProvider{failReconcile: 100}
-	runtime := NewRuntime(store, "agent", time.Hour, time.Hour)
+	runtime := NewRuntime(store, time.Hour, time.Hour)
 	if err := runtime.Register(provider); err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +207,7 @@ func TestRuntimeNormalizesStoredAPIVersionOnResync(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &testProvider{}
-	runtime := NewRuntime(store, "agent", time.Millisecond, time.Hour)
+	runtime := NewRuntime(store, time.Millisecond, time.Hour)
 	if err := runtime.Register(provider); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +276,7 @@ func TestRuntimeFailedDeleteRemainsVisibleAndCanBeRetried(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &testProvider{failDelete: 1}
-	runtime := NewRuntime(store, "agent", time.Hour, time.Hour)
+	runtime := NewRuntime(store, time.Hour, time.Hour)
 	if err := runtime.Register(provider); err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +310,7 @@ func TestRuntimeRegistersAndUnregistersProviderAfterStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime := NewRuntime(store, "agent", time.Hour, time.Hour)
+	runtime := NewRuntime(store, time.Hour, time.Hour)
 	runtime.Start(context.Background())
 	defer runtime.Close()
 	if err := runtime.Register(&testProvider{}); err != nil {

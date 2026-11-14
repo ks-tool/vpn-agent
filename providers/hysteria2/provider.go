@@ -74,7 +74,7 @@ func (Adapter) NewSecret() (string, error) {
 
 func (Adapter) ValidateSecret(secret string) error {
 	if len(secret) < 16 || len(secret) > 256 || strings.ContainsAny(secret, "\r\n\x00") {
-		return errors.New("Hysteria 2 password must contain 16 to 256 printable characters")
+		return errors.New("hysteria 2 password must contain 16 to 256 printable characters")
 	}
 	return nil
 }

@@ -25,12 +25,12 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ks-tool/vpn-agent/v2/models"
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
 
 	"github.com/rs/zerolog/log"
 )
 
-func InterfaceCreate(cfg models.InterfaceConfig) error {
+func InterfaceCreate(cfg awgmodels.InterfaceConfig) error {
 	if err := backend.Add(cfg.Interface, cfg.IsAmnezia()); err != nil {
 		return err
 	}
@@ -72,7 +72,7 @@ func InterfaceCreate(cfg models.InterfaceConfig) error {
 // teardown and do not disturb the live interface. prev is nil on agent-startup
 // re-apply, in which case the new up-hooks run without teardown. Teardown is
 // best-effort so a rule that's already gone doesn't block the update.
-func InterfaceUpdate(prev *models.InterfaceConfig, cfg models.InterfaceConfig) error {
+func InterfaceUpdate(prev *awgmodels.InterfaceConfig, cfg awgmodels.InterfaceConfig) error {
 	upHooksChanged := prev == nil ||
 		!slices.Equal(prev.PreUp, cfg.PreUp) ||
 		!slices.Equal(prev.PostUp, cfg.PostUp)
@@ -119,7 +119,7 @@ func InterfaceUpdate(prev *models.InterfaceConfig, cfg models.InterfaceConfig) e
 // PreDown/PostDown hooks run around the teardown but, unlike InterfaceCreate's
 // PreUp/PostUp (which abort on failure), are best-effort: removing the link is
 // the whole point here, so a failing hook is logged and teardown continues.
-func InterfaceDelete(cfg models.InterfaceConfig) error {
+func InterfaceDelete(cfg awgmodels.InterfaceConfig) error {
 	if !backend.Exists(cfg.Interface) {
 		return nil
 	}
@@ -157,7 +157,7 @@ func runHooks(iface, phase string, cmds []string) error {
 	return nil
 }
 
-func IsInterfaceExist(cfg models.InterfaceConfig) bool {
+func IsInterfaceExist(cfg awgmodels.InterfaceConfig) bool {
 	return backend.Exists(cfg.Interface)
 }
 

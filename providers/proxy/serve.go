@@ -37,7 +37,6 @@ type ServeOptions struct {
 	TLSKey      string
 	TLSClientCA string
 	Store       resource.Store
-	AgentID     string
 	Provider    resource.Provider
 	Start       func() error
 	Handler     func(*resource.Runtime) http.Handler
@@ -45,7 +44,7 @@ type ServeOptions struct {
 }
 
 func Serve(options ServeOptions) error {
-	runtime := resource.NewRuntime(options.Store, options.AgentID, time.Second, 30*time.Second)
+	runtime := resource.NewRuntime(options.Store, time.Second, 30*time.Second)
 	defer runtime.Close()
 	if err := runtime.Register(options.Provider); err != nil {
 		return err

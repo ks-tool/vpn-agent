@@ -22,20 +22,20 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
-	"strings"
+	"path/filepath"
+	"uuid"
 
+	packcmd "github.com/horchestra/pack/cmd"
+	"github.com/horchestra/pack/pkg/plan"
+	"github.com/horchestra/pack/sdk"
+	"github.com/horchestra/targets/host/local"
+	"github.com/ks-tool/vpn-agent/v2/models"
 	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
 )
 
-func run(ctx context.Context, action, name string, args ...string) error {
-	command := exec.CommandContext(ctx, name, args...)
-	command.Stdout, command.Stderr = os.Stdout, os.Stderr
-	if err := command.Run(); err != nil {
-		return fmt.Errorf("%s: %w", action, err)
-	}
-	return nil
-}
+const deployStateDir = "/var/lib/vpn-provider-awg/pack"
+
+var embeddedLocalPackApply = packcmd.Apply
 
 func Deploy(ctx context.Context, configPath string) error {
 	data, err := os.ReadFile(configPath)
@@ -49,59 +49,46 @@ func Deploy(ctx context.Context, configPath string) error {
 	if len(config.AgentDB) == 0 {
 		return errors.New("agentDB is required")
 	}
-	userspace := false
-	for name, value := range config.Options {
-		if name != "userspace" {
-			return fmt.Errorf("unsupported AWG provider option %q", name)
-		}
-		enabled, ok := value.(bool)
-		if !ok {
-			return errors.New("AWG provider option userspace must be a boolean")
-		}
-		userspace = enabled
-	}
-	packages := []string{"ca-certificates", "iproute2", "procps"}
-	if !userspace {
-		kernel, err := exec.CommandContext(ctx, "uname", "-r").Output()
-		if err != nil {
-			return fmt.Errorf("detect running kernel: %w", err)
-		}
-		packages = append(packages, "gnupg2", "kmod", "linux-headers-"+strings.TrimSpace(string(kernel)))
-	}
-	if err := run(ctx, "install AWG dependencies", "apt-get", append([]string{"install", "-y"}, packages...)...); err != nil {
+	pack, values, err := New(models.ProviderDeployment{Name: "awg", Options: config.Options}, config.AgentDB)
+	if err != nil {
 		return err
 	}
-	if !userspace {
-		if err := run(ctx, "trust Amnezia PPA", "apt-key", "adv", "--keyserver", "keyserver.ubuntu.com", "--recv-keys", "75C9DD72C799870E310542E24166F2C257290828"); err != nil {
-			return err
-		}
-		const repository = "deb https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu focal main\ndeb-src https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu focal main\n"
-		if err := os.WriteFile("/etc/apt/sources.list.d/amneziawg.list", []byte(repository), 0o644); err != nil {
-			return err
-		}
-		if err := run(ctx, "refresh APT repositories", "apt-get", "update"); err != nil {
-			return err
-		}
-		if err := run(ctx, "install AmneziaWG kernel module", "apt-get", "install", "-y", "amneziawg"); err != nil {
-			return err
-		}
-		if err := os.WriteFile("/etc/modules-load.d/amneziawg.conf", []byte("amneziawg\n"), 0o644); err != nil {
-			return err
-		}
-		if err := run(ctx, "load AmneziaWG kernel module", "modprobe", "amneziawg"); err != nil {
-			return err
-		}
-	}
-	const sysctlPath = "/etc/sysctl.d/99-vpn-provider-awg.conf"
-	if err := os.WriteFile(sysctlPath, []byte("net.ipv4.ip_forward=1\n"), 0o644); err != nil {
+	return applyLocalPack(ctx, pack, values, deployStateDir)
+}
+
+func applyLocalPack(ctx context.Context, component sdk.Pack, values map[string]any, dir string) error {
+	local.Register()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if err := run(ctx, "apply AWG sysctls", "sysctl", "--system"); err != nil {
+	if err := writeDeployJSON(filepath.Join(dir, "release.yaml"), map[string]any{
+		"state": "observe",
+		"id":    uuid.New().String(),
+	}); err != nil {
 		return err
 	}
-	deployment := proxy.Deployment{Port: 9091, EnvPrefix: "VPN_PROVIDER_AWG"}
-	if userspace {
-		deployment.Args = []string{"--userspace"}
+	if err := writeDeployJSON(filepath.Join(dir, "env.yaml"), map[string]any{
+		"target":        "host",
+		"history_count": 3,
+		"keys": map[string]any{
+			component.Meta().Name: map[string]any{"packages": []string{}},
+		},
+	}); err != nil {
+		return err
 	}
-	return proxy.WriteRegistration("awg", config.AgentDB, deployment)
+	return embeddedLocalPackApply(ctx, packcmd.ApplyOptions{
+		Dir: dir, Refresh: false, Pack: component, Values: values,
+		Env: map[string]string{"PACK_JOURNAL": "off"},
+		Planned: func(p *plan.Plan) {
+			fmt.Printf("pack plan:\n%s\n", p.Text())
+		},
+	})
+}
+
+func writeDeployJSON(path string, value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
 }

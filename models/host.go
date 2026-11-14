@@ -35,12 +35,9 @@ type HostInfo struct {
 	// container, detected via the /.dockerenv file. Only the userspace agent
 	// ships as a container image, so this is only ever true for it.
 	InDocker bool `json:"inDocker"`
-	// KernelModule reports whether the AmneziaWG kernel module is available on
-	// the host (modinfo amneziawg succeeds — e.g. installed via dkms). Only
-	// meaningful for the kernel backend; always false for userspace.
+	// KernelModule reports provider-reported kernel module availability.
 	KernelModule bool `json:"kernelModule"`
-	// InterfaceKinds lists the interface variants this agent can create on this
-	// host: "amneziawg" and/or "wireguard".
+	// InterfaceKinds lists provider-reported interface variants.
 	InterfaceKinds []string `json:"interfaceKinds"`
 	// Arch is the host CPU architecture the agent runs on (runtime.GOARCH, e.g.
 	// "amd64"/"arm64"). The admin uses it to offer only matching-architecture

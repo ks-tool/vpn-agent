@@ -23,10 +23,12 @@ import (
 	"testing"
 	"time"
 
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
+
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
 	"github.com/ks-tool/vpn-agent/v2/models"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/storage/fs"
 	"github.com/ks-tool/vpn-agent/v2/storage"
-	"github.com/ks-tool/vpn-agent/v2/storage/fs"
 )
 
 func TestPeerLifecycleActionsAndSecretHandling(t *testing.T) {
@@ -35,20 +37,17 @@ func TestPeerLifecycleActionsAndSecretHandling(t *testing.T) {
 		t.Fatal(err)
 	}
 	interfaceKey := mustPeerKey(t)
-	legacy := models.InterfaceConfig{Interface: "awg0", Address: "10.0.0.1/24", ListenPort: 51820, PrivateKey: interfaceKey}
+	legacy := awgmodels.InterfaceConfig{Interface: "awg0", Address: "10.0.0.1/24", ListenPort: 51820, PrivateKey: interfaceKey}
 	if err := store.Set(&legacy); err != nil {
 		t.Fatal(err)
 	}
-	inventory, err := resource.NewFileStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	inventory := resource.NewMemoryStore()
 	network := &fakeNetwork{}
 	provider, err := New(store, t.TempDir(), network, "test", inventory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime := resource.NewRuntime(inventory, "agent", time.Millisecond, time.Hour)
+	runtime := resource.NewRuntime(inventory, time.Millisecond, time.Hour)
 	if err := runtime.Register(provider); err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +126,7 @@ func TestPeerLifecycleActionsAndSecretHandling(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	var storedInterface *models.InterfaceConfig
+	var storedInterface *awgmodels.InterfaceConfig
 	for time.Now().Before(deadline) {
 		storedInterface, err = store.Get("awg0")
 		if err == nil && len(storedInterface.Peers) == 0 {
@@ -155,7 +154,7 @@ func TestPeerSecretMigration(t *testing.T) {
 	interfaceKey := mustPeerKey(t)
 	peerKey := mustPeerKey(t)
 	presharedKey := mustPeerKey(t)
-	legacy := models.InterfaceConfig{Interface: "awg0", Address: "10.0.0.1/24", ListenPort: 51820, PrivateKey: interfaceKey, Peers: []models.InterfacePeer{{Key: peerKey.PublicKey(), AllowedIPs: []string{"10.0.0.2/32"}}}}
+	legacy := awgmodels.InterfaceConfig{Interface: "awg0", Address: "10.0.0.1/24", ListenPort: 51820, PrivateKey: interfaceKey, Peers: []awgmodels.InterfacePeer{{Key: peerKey.PublicKey(), AllowedIPs: []string{"10.0.0.2/32"}}}}
 	if err := store.Set(&legacy); err != nil {
 		t.Fatal(err)
 	}
@@ -230,9 +229,9 @@ func waitForPeerGeneration(t *testing.T, runtime *resource.Runtime, generation i
 	t.Fatalf("peer did not reach generation %d: %+v", generation, item)
 }
 
-func mustPeerKey(t *testing.T) models.Key {
+func mustPeerKey(t *testing.T) awgmodels.Key {
 	t.Helper()
-	key, err := models.GeneratePrivateKey()
+	key, err := awgmodels.GeneratePrivateKey()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,4 +245,59 @@ func mustPeerJSON(t *testing.T, value any) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func TestTunnelPeerImportsPresharedKeyWithoutPrivateKey(t *testing.T) {
+	store, err := fs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	interfaceKey, peerKey, presharedKey := mustPeerKey(t), mustPeerKey(t), mustPeerKey(t)
+	legacy := awgmodels.InterfaceConfig{
+		Interface: "awg0", Address: "10.0.0.8/24", ListenPort: 51820, PrivateKey: interfaceKey,
+		Peers: []awgmodels.InterfacePeer{{Key: peerKey.PublicKey(), AllowedIPs: []string{"10.0.0.0/24"}}},
+	}
+	if err := store.Set(&legacy); err != nil {
+		t.Fatal(err)
+	}
+	inventory := resource.NewMemoryStore()
+	interfaceResource := models.Resource{ID: "interface-id", APIVersion: APIVersion, Kind: "Interface", Name: "exit", Generation: 1, Spec: json.RawMessage(`{"iface":"awg0","listen":51820,"addr":"10.0.0.8/24"}`)}
+	if err := inventory.Put(resource.StoredResource{Provider: "awg", Resource: interfaceResource}); err != nil {
+		t.Fatal(err)
+	}
+	peerSpec := PeerSpec{Name: "Tunnel peer", InterfaceRef: "interface-id", PublicKey: publicKeyString(peerKey), AllowedIPs: []string{"10.0.0.0/24"}}
+	rawSpec, _ := json.Marshal(peerSpec)
+	peerResource := models.Resource{ID: "peer-id", APIVersion: APIVersion, Kind: "Peer", Name: "tunnel", Generation: 1, Spec: rawSpec}
+	if err := inventory.Put(resource.StoredResource{Provider: "awg", Resource: peerResource}); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := New(store, t.TempDir(), &fakeNetwork{}, "test", inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments, _ := json.Marshal(map[string]string{"presharedKey": presharedKey.String()})
+	if _, err := provider.Action(context.Background(), peerResource, "importSecret", arguments); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := inventory.Get("awg", "Peer", "tunnel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := provider.Reconcile(context.Background(), updated.Resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(status), `"secretMigrationPending":true`) {
+		t.Fatalf("infrastructure peer must not wait for a client private key: %s", status)
+	}
+	configured, err := store.Get("awg0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(configured.Peers) != 1 || configured.Peers[0].PresharedKey == nil || *configured.Peers[0].PresharedKey != presharedKey {
+		t.Fatalf("tunnel peer PSK was not restored: %+v", configured.Peers)
+	}
+	if _, err := provider.Action(context.Background(), updated.Resource, "renderClientConfig", json.RawMessage(`{"endpoint":"192.0.2.1:51820"}`)); err == nil {
+		t.Fatal("infrastructure peer must not render a client config without a private key")
+	}
 }

@@ -24,10 +24,13 @@ import (
 	"net/http/pprof"
 	"sync/atomic"
 
-	"github.com/ks-tool/vpn-agent/v2/internal/metrics"
-	"github.com/ks-tool/vpn-agent/v2/internal/service"
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
+	awgstorage "github.com/ks-tool/vpn-agent/v2/providers/awg/storage"
+
 	"github.com/ks-tool/vpn-agent/v2/models"
 	"github.com/ks-tool/vpn-agent/v2/mux"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/metrics"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/service"
 	"github.com/ks-tool/vpn-agent/v2/storage"
 
 	"github.com/Jipok/wgctrl-go"
@@ -36,8 +39,9 @@ import (
 
 type Handler struct {
 	awg       *wgctrl.Client
-	store     storage.Storage
+	store     awgstorage.Storage
 	collector *metrics.Collector
+	latency   *metrics.LatencyCollector
 	hostInfo  models.HostInfo
 
 	// profiling gates the net/http/pprof endpoints at runtime. Off by default
@@ -47,7 +51,7 @@ type Handler struct {
 	profiling atomic.Bool
 }
 
-func New(hostInfo models.HostInfo, store storage.Storage, collector *metrics.Collector, mws ...mux.Middleware) http.Handler {
+func New(hostInfo models.HostInfo, store awgstorage.Storage, collector *metrics.Collector, latency *metrics.LatencyCollector, mws ...mux.Middleware) http.Handler {
 	// PUT         /interfaces     		=> set (optional ?replacePeers=true for a forced peer reset)
 	// GET         /interfaces/ 		=> list
 	// GET         /interfaces/unmanaged	=> live devices with no stored config (wg-quick etc.)
@@ -64,7 +68,7 @@ func New(hostInfo models.HostInfo, store storage.Storage, collector *metrics.Col
 		panic(err)
 	}
 
-	h := &Handler{awg: awg, store: store, collector: collector, hostInfo: hostInfo}
+	h := &Handler{awg: awg, store: store, collector: collector, latency: latency, hostInfo: hostInfo}
 
 	router := mux.NewServeMux(mws...)
 	router.PUT("/interfaces", h.set)
@@ -79,6 +83,8 @@ func New(hostInfo models.HostInfo, store storage.Storage, collector *metrics.Col
 	router.GET("/info", h.info)
 	router.GET("/metrics", h.metrics)
 	router.GET("/metrics/history", h.metricsHistory)
+	router.GET("/metrics/{interface}", h.interfaceMetrics)
+	router.GET("/metrics/{interface}/history", h.interfaceMetricsHistory)
 	router.PATCH("/metrics", h.setMetricsState)
 	router.GET("/profiling", h.getProfilingState)
 	router.PATCH("/profiling", h.setProfilingState)
@@ -107,7 +113,7 @@ func (h *Handler) info(w http.ResponseWriter, _ *http.Request) {
 func (h *Handler) set(w http.ResponseWriter, r *http.Request) {
 	fields := map[string]any{"method": r.Method, "path": r.URL.Path}
 
-	var cfg models.InterfaceConfig
+	var cfg awgmodels.InterfaceConfig
 	if err := decode(r, &cfg); err != nil {
 		log.Debug().Fields(fields).Err(err).Msg("decoding interface failed")
 		badRequest(w, err)
@@ -338,6 +344,39 @@ func (h *Handler) metricsHistory(w http.ResponseWriter, _ *http.Request) {
 	encode(w, h.collector.SystemHistory())
 }
 
+func (h *Handler) interfaceMetrics(w http.ResponseWriter, r *http.Request) {
+	if h.collector == nil {
+		http.Error(w, "metrics collection is disabled", http.StatusServiceUnavailable)
+		return
+	}
+	name := r.PathValue("interface")
+	for _, iface := range h.collector.Snapshot().Interfaces {
+		if iface.Interface == name {
+			if h.latency != nil {
+				h.latency.Apply(&iface)
+			}
+			encode(w, iface)
+			return
+		}
+	}
+	http.Error(w, "interface metrics not found", http.StatusNotFound)
+}
+
+func (h *Handler) interfaceMetricsHistory(w http.ResponseWriter, r *http.Request) {
+	if h.collector == nil {
+		http.Error(w, "metrics collection is disabled", http.StatusServiceUnavailable)
+		return
+	}
+	name := r.PathValue("interface")
+	for _, iface := range h.collector.SystemHistory().Interfaces {
+		if iface.Interface == name {
+			encode(w, iface)
+			return
+		}
+	}
+	http.Error(w, "interface metrics history not found", http.StatusNotFound)
+}
+
 type metricsStateRequest struct {
 	Enabled bool `json:"enabled"`
 }
@@ -358,6 +397,9 @@ func (h *Handler) setMetricsState(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.collector.SetEnabled(req.Enabled)
+	if h.latency != nil {
+		h.latency.SetEnabled(req.Enabled)
+	}
 	log.Debug().Fields(fields).Bool("enabled", req.Enabled).Msg("set metrics collection state")
 	encode(w, metricsStateRequest{Enabled: h.collector.Enabled()})
 }

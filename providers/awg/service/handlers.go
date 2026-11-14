@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/ks-tool/vpn-agent/v2/models"
-	"github.com/ks-tool/vpn-agent/v2/storage"
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
+	awgstorage "github.com/ks-tool/vpn-agent/v2/providers/awg/storage"
 
 	"github.com/Jipok/wgctrl-go"
 	"github.com/Jipok/wgctrl-go/wgtypes"
@@ -30,10 +30,10 @@ import (
 
 type Handler struct {
 	awg   *wgctrl.Client
-	store storage.Storage
+	store awgstorage.Storage
 }
 
-func NewHandler(store storage.Storage, awg *wgctrl.Client) *Handler {
+func NewHandler(store awgstorage.Storage, awg *wgctrl.Client) *Handler {
 	return &Handler{awg, store}
 }
 
@@ -78,18 +78,18 @@ func (h *Handler) StopEnabled() {
 // pushes the full device config. prev is the previously-stored config for this
 // interface (nil for a brand-new one), used by InterfaceUpdate to reconcile
 // hooks on an in-place edit.
-func (h *Handler) One(prev *models.InterfaceConfig, cfg models.InterfaceConfig) error {
+func (h *Handler) One(prev *awgmodels.InterfaceConfig, cfg awgmodels.InterfaceConfig) error {
 	return h.one(prev, cfg, false)
 }
 
 // OneReplacingPeers applies the config with ReplacePeers enabled. This is an
 // explicit disruptive operation for callers that need to rebuild the complete
 // live peer set rather than preserve existing peer sessions.
-func (h *Handler) OneReplacingPeers(prev *models.InterfaceConfig, cfg models.InterfaceConfig) error {
+func (h *Handler) OneReplacingPeers(prev *awgmodels.InterfaceConfig, cfg awgmodels.InterfaceConfig) error {
 	return h.one(prev, cfg, true)
 }
 
-func (h *Handler) one(prev *models.InterfaceConfig, cfg models.InterfaceConfig, replacePeers bool) error {
+func (h *Handler) one(prev *awgmodels.InterfaceConfig, cfg awgmodels.InterfaceConfig, replacePeers bool) error {
 	logger := log.With().Str("interface", cfg.Interface).Logger()
 
 	// A disabled interface must not be present in the kernel: tear its link down
@@ -108,12 +108,12 @@ func (h *Handler) one(prev *models.InterfaceConfig, cfg models.InterfaceConfig, 
 	if ok := IsInterfaceExist(cfg); ok {
 		logger.Debug().Str("action", "update").Send()
 		if err := InterfaceUpdate(prev, cfg); err != nil {
-			return err
+			return fmt.Errorf("update interface %q: %w", cfg.Interface, err)
 		}
 	} else {
 		logger.Debug().Str("action", "create").Send()
 		if err := InterfaceCreate(cfg); err != nil {
-			return err
+			return fmt.Errorf("create interface %q: %w", cfg.Interface, err)
 		}
 	}
 
@@ -121,7 +121,7 @@ func (h *Handler) one(prev *models.InterfaceConfig, cfg models.InterfaceConfig, 
 	// AmneziaWG obfuscation params AND peers — while syncing peers in place so
 	// unchanged peers keep their live sessions.
 	logger.Debug().Str("action", "configure").Send()
-	awgCfg := cfg.ToAmneziaConfig()
+	awgCfg := toAmneziaConfig(cfg)
 	if replacePeers {
 		awgCfg.ReplacePeers = true
 	} else {
@@ -174,7 +174,7 @@ func (h *Handler) Delete(iface string) error {
 	// record removed by hand), tear the interface down anyway, hooklessly.
 	cfg, err := h.store.Get(iface)
 	if err != nil {
-		return InterfaceDelete(models.InterfaceConfig{Interface: iface})
+		return InterfaceDelete(awgmodels.InterfaceConfig{Interface: iface})
 	}
 	return InterfaceDelete(*cfg)
 }
@@ -211,7 +211,7 @@ func (h *Handler) DetectOrphans() ([]string, error) {
 // diff is cheap, and an interface raised after the agent started must show up
 // without a restart. Each entry carries the link kind (amneziawg/wireguard) so
 // the admin can warn when an import config doesn't match the live link.
-func (h *Handler) ListUnmanaged() ([]models.UnmanagedInterface, error) {
+func (h *Handler) ListUnmanaged() ([]awgmodels.UnmanagedInterface, error) {
 	configs, err := h.store.List()
 	if err != nil {
 		return nil, err
@@ -229,22 +229,22 @@ func (h *Handler) ListUnmanaged() ([]models.UnmanagedInterface, error) {
 // testable without a real WireGuard device (h.awg.Devices() needs netlink and
 // CAP_NET_ADMIN, neither available to a unit test). Returns a non-nil, name-
 // sorted slice so it marshals as [] rather than null and lists stably.
-func unmanagedInterfaces(configs []models.InterfaceConfig, devices []*wgtypes.Device) []models.UnmanagedInterface {
+func unmanagedInterfaces(configs []awgmodels.InterfaceConfig, devices []*wgtypes.Device) []awgmodels.UnmanagedInterface {
 	known := make(map[string]bool, len(configs))
 	for _, cfg := range configs {
 		known[cfg.Interface] = true
 	}
 
-	out := make([]models.UnmanagedInterface, 0)
+	out := make([]awgmodels.UnmanagedInterface, 0)
 	for _, dev := range devices {
 		if known[dev.Name] {
 			continue
 		}
-		kind := models.InterfaceKindWireGuard
+		kind := awgmodels.InterfaceKindWireGuard
 		if dev.IsAmnezia {
-			kind = models.InterfaceKindAmnezia
+			kind = awgmodels.InterfaceKindAmnezia
 		}
-		out = append(out, models.UnmanagedInterface{Name: dev.Name, Kind: kind})
+		out = append(out, awgmodels.UnmanagedInterface{Name: dev.Name, Kind: kind})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -252,7 +252,7 @@ func unmanagedInterfaces(configs []models.InterfaceConfig, devices []*wgtypes.De
 
 // orphanInterfaces is DetectOrphans's pure diffing logic: the unmanaged
 // device names, in host order.
-func orphanInterfaces(configs []models.InterfaceConfig, devices []*wgtypes.Device) []string {
+func orphanInterfaces(configs []awgmodels.InterfaceConfig, devices []*wgtypes.Device) []string {
 	var orphans []string
 	for _, u := range unmanagedInterfaces(configs, devices) {
 		orphans = append(orphans, u.Name)

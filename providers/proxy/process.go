@@ -59,7 +59,8 @@ func (m *processManager) apply(resourceID string, config CoreConfig) error {
 	hash := sha256.Sum256(config.Data)
 	if current := m.processes[resourceID]; current != nil && current.hash == hash {
 		select {
-		case <-current.done:
+		case err := <-current.done:
+			_ = err
 			delete(m.processes, resourceID)
 		default:
 			return nil
@@ -118,23 +119,28 @@ func (m *processManager) stopLocked(resourceID string) error {
 	}
 	delete(m.processes, resourceID)
 	select {
-	case <-process.done:
+	case err := <-process.done:
+		_ = err
 		return nil
 	default:
 	}
 	if err := process.cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		_ = process.cmd.Process.Kill()
-		<-process.done
-		return err
+		return errors.Join(err, <-process.done)
 	}
 	select {
-	case <-process.done:
+	case err := <-process.done:
+		_ = err
 		return nil
 	case <-time.After(5 * time.Second):
 		if err := process.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			return err
 		}
-		<-process.done
+		waitErr := <-process.done
+		var exitErr *exec.ExitError
+		if waitErr != nil && !errors.As(waitErr, &exitErr) {
+			return waitErr
+		}
 		return nil
 	}
 }

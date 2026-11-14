@@ -18,13 +18,10 @@ package resource
 
 import (
 	"bytes"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/ks-tool/vpn-agent/v2/models"
@@ -40,7 +37,6 @@ type StoredResource struct {
 }
 
 type Store interface {
-	AgentID() (string, error)
 	List() ([]StoredResource, error)
 	Get(provider, kind, name string) (StoredResource, error)
 	Put(StoredResource) error
@@ -57,32 +53,6 @@ func NewFileStore(root string) (*FileStore, error) {
 		return nil, err
 	}
 	return &FileStore{root: root}, nil
-}
-
-func (s *FileStore) AgentID() (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	path := filepath.Join(s.root, "agent-id")
-	data, err := os.ReadFile(path)
-	if err == nil {
-		id := strings.TrimSpace(string(data))
-		if id != "" {
-			return id, nil
-		}
-	}
-	if err != nil && !os.IsNotExist(err) {
-		return "", err
-	}
-
-	id, err := randomID()
-	if err != nil {
-		return "", err
-	}
-	if err := atomic.WriteFile(path, bytes.NewBufferString(id+"\n")); err != nil {
-		return "", err
-	}
-	return id, nil
 }
 
 func (s *FileStore) List() ([]StoredResource, error) {
@@ -153,15 +123,4 @@ func (s *FileStore) read(path string) (StoredResource, error) {
 func (s *FileStore) filename(provider, kind, name string) string {
 	hash := sha256Sum(provider + "\x00" + kind + "\x00" + name)
 	return filepath.Join(s.root, hash+".resource")
-}
-
-func randomID() (string, error) {
-	var id [16]byte
-	if _, err := rand.Read(id[:]); err != nil {
-		return "", err
-	}
-	id[6] = (id[6] & 0x0f) | 0x40
-	id[8] = (id[8] & 0x3f) | 0x80
-	encoded := hex.EncodeToString(id[:])
-	return strings.Join([]string{encoded[0:8], encoded[8:12], encoded[12:16], encoded[16:20], encoded[20:32]}, "-"), nil
 }

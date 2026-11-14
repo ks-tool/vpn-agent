@@ -17,7 +17,6 @@
 package metrics
 
 import (
-	"strings"
 	"sync"
 	"time"
 )
@@ -83,10 +82,8 @@ func (r *ringBuffer) series() []point {
 }
 
 // pruneBefore drops every sample older than cutoff and reports whether the
-// buffer is now empty (its newest sample was itself older than cutoff — e.g. a
-// peer that was removed and has had no new samples for the whole retention
-// window). Called only when snapshotting (see store.prune), so the rebuild
-// cost is irrelevant.
+// buffer is now empty. Called only when snapshotting (see store.prune), so the
+// rebuild cost is irrelevant.
 func (r *ringBuffer) pruneBefore(cutoff time.Time) (empty bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -109,10 +106,7 @@ func (r *ringBuffer) pruneBefore(cutoff time.Time) (empty bool) {
 	return r.size == 0
 }
 
-// store is a registry of ring buffers grouped by database (the "system"
-// host-stats group, or an interface name for its peers' stats) and metric
-// name within that database — mirrors the db/metric two-level naming
-// collector.go uses, without needing an actual TSDB engine for it.
+// store is a registry of ring buffers grouped by database and metric name.
 type store struct {
 	capacity int
 
@@ -177,60 +171,6 @@ func (s *store) series(db, metric string) []point {
 	}
 	s.mu.Unlock()
 	return nil
-}
-
-// dropDB removes a whole database (all its metrics and their series) at once —
-// used to forget a deleted interface's peer metrics immediately instead of
-// waiting for prune to age each series past the retention window. No-op for a
-// database that was never recorded.
-func (s *store) dropDB(db string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.dbs, db)
-}
-
-// retainOnly drops every database whose name is not in keep. The collector runs
-// it each tick with the set of currently-existing interfaces (plus systemDB), so
-// metrics for an interface that no longer exists get evicted regardless of how
-// they got there — a delete whose dropDB was lost to an ungraceful restart (the
-// on-disk checkpoint is reloaded into memory on start), or a sample that raced
-// the delete handler and re-created the database. This bounds such staleness to
-// one collection interval instead of the full retention window.
-func (s *store) retainOnly(keep map[string]struct{}) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for db := range s.dbs {
-		if _, ok := keep[db]; !ok {
-			delete(s.dbs, db)
-		}
-	}
-}
-
-// retainPeers drops every metric in db whose "<publicKey>/<field>" key prefix is
-// not in keep, evicting a deleted peer's series (rx/tx/handshake) as soon as the
-// peer is gone from the interface — instead of waiting for it to age past the
-// retention window. keep holds the hex public keys of the peers that should
-// remain (see collectPeers' hex.EncodeToString keying). An empty resulting db is
-// removed. No-op for a database that was never recorded.
-func (s *store) retainPeers(db string, keep map[string]struct{}) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	metrics, ok := s.dbs[db]
-	if !ok {
-		return
-	}
-	for name := range metrics {
-		key, _, found := strings.Cut(name, "/")
-		if !found {
-			continue // not a "<key>/<field>" peer metric — leave it be
-		}
-		if _, keepIt := keep[key]; !keepIt {
-			delete(metrics, name)
-		}
-	}
-	if len(metrics) == 0 {
-		delete(s.dbs, db)
-	}
 }
 
 // databases returns every database name with at least one metric.
@@ -311,12 +251,7 @@ func (s *store) restore(data persistedStore, cutoff time.Time) {
 	}
 }
 
-// prune drops samples older than cutoff and removes any metric (and any then
-// empty database) whose buffer is left empty. This is what actually evicts the
-// series of a removed peer — the collector stops writing to it, so within one
-// retention window its newest sample ages past cutoff and it's dropped here,
-// instead of lingering in memory (and every snapshot) forever. Run from
-// Collector.SaveHistory before each snapshot.
+// prune drops samples older than cutoff and removes empty metrics and databases.
 func (s *store) prune(cutoff time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

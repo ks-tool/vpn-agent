@@ -54,7 +54,7 @@ type config struct {
 }
 
 func Run(version string) {
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339, NoColor: true})
 
 	var cfg config
 	if err := agentconfig.Load(&cfg, agentEnvironmentPrefix(), os.Args[1:]); err != nil {
@@ -74,15 +74,8 @@ func Run(version string) {
 		}
 	}
 
-	resourceStore, err := resource.NewFileStore(filepath.Join(cfg.DB, "resources"))
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to initialize resource storage")
-	}
-	agentID, err := resourceStore.AgentID()
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to initialize agent identity")
-	}
-	resourceRuntime := resource.NewRuntime(resourceStore, agentID, time.Second, 30*time.Second)
+	resourceStore := resource.NewMemoryStore()
+	resourceRuntime := resource.NewRuntime(resourceStore, time.Second, 30*time.Second)
 	defer resourceRuntime.Close()
 
 	providerDir := filepath.Join(cfg.DB, "providers.d")
@@ -137,22 +130,17 @@ func Run(version string) {
 	if err := systemMetrics.LoadHistory(); err != nil {
 		log.Warn().Err(err).Msg("failed to load persisted system metrics")
 	}
-	latencyMetrics := metrics.NewLatencyCollector(cfg.LegacyProxy, cfg.MetricsInterval)
 	metricsCtx, stopMetrics := context.WithCancel(context.Background())
 	defer stopMetrics()
 	var metricsWG sync.WaitGroup
-	metricsWG.Add(2)
+	metricsWG.Add(1)
 	go func() {
 		defer metricsWG.Done()
 		systemMetrics.Run(metricsCtx)
 	}()
-	go func() {
-		defer metricsWG.Done()
-		latencyMetrics.Run(metricsCtx)
-	}()
 
 	hostInfo := GatherHostInfo(version)
-	handler, err := api.NewAgent(hostInfo, resourceRuntime, cfg.LegacyProxy, systemMetrics, latencyMetrics, middleware.RequestID, middleware.Logging)
+	handler, err := api.NewAgent(hostInfo, resourceRuntime, cfg.LegacyProxy, systemMetrics, middleware.RequestID, middleware.Logging)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to configure legacy provider proxy")
 	}

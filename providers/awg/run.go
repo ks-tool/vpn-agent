@@ -25,21 +25,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	awgstorage "github.com/ks-tool/vpn-agent/v2/providers/awg/storage"
+
 	"github.com/ks-tool/vpn-agent/v2/internal/agent"
-	"github.com/ks-tool/vpn-agent/v2/internal/api"
 	agentconfig "github.com/ks-tool/vpn-agent/v2/internal/config"
-	"github.com/ks-tool/vpn-agent/v2/internal/kernel"
-	"github.com/ks-tool/vpn-agent/v2/internal/metrics"
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
-	"github.com/ks-tool/vpn-agent/v2/internal/service"
-	"github.com/ks-tool/vpn-agent/v2/internal/userspace"
 	"github.com/ks-tool/vpn-agent/v2/mux/middleware"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/api"
 	providerdeploy "github.com/ks-tool/vpn-agent/v2/providers/awg/deploy"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/kernel"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/metrics"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/service"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/storage/fs"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/userspace"
 	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
-	"github.com/ks-tool/vpn-agent/v2/storage"
-	"github.com/ks-tool/vpn-agent/v2/storage/fs"
 
 	"github.com/Jipok/wgctrl-go"
 	"github.com/rs/zerolog"
@@ -81,7 +83,7 @@ func Run(version string) {
 		}
 		return
 	}
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339, NoColor: true})
 
 	var cfg config
 	if err := agentconfig.Load(&cfg, environmentPrefix(), os.Args[1:]); err != nil {
@@ -113,14 +115,7 @@ func Run(version string) {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to initialize storage")
 	}
-	resourceStore, err := resource.NewFileStore(filepath.Join(cfg.DB, "resources"))
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to initialize resource storage")
-	}
-	agentID, err := resourceStore.AgentID()
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to initialize provider identity")
-	}
+	resourceStore := resource.NewMemoryStore()
 	if err := loadInterfaces(store); err != nil {
 		log.Fatal().Err(err).Msg("failed to load WireGuard interfaces")
 	}
@@ -136,7 +131,7 @@ func Run(version string) {
 		log.Fatal().Err(err).Msg("failed to open wgctrl client for metrics")
 	}
 	defer func() { _ = metricsAwg.Close() }()
-	awgProvider, err := New(store, filepath.Join(cfg.DB, "resources", "secrets"), service.NewHandler(store, metricsAwg), version, resourceStore)
+	awgProvider, err := New(store, cfg.DB, service.NewHandler(store, metricsAwg), version, resourceStore)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to initialize AWG provider")
 	}
@@ -145,11 +140,22 @@ func Run(version string) {
 	if err := collector.LoadHistory(); err != nil {
 		log.Warn().Err(err).Msg("failed to load persisted metrics history")
 	}
+	latency := metrics.NewLatencyCollector(collector.Snapshot, cfg.MetricsInterval)
 	metricsCtx, stopMetrics := context.WithCancel(context.Background())
 	defer stopMetrics()
+	var metricsWG sync.WaitGroup
+	metricsWG.Add(2)
+	go func() {
+		defer metricsWG.Done()
+		collector.Run(metricsCtx)
+	}()
+	go func() {
+		defer metricsWG.Done()
+		latency.Run(metricsCtx)
+	}()
 	metricsDone := make(chan struct{})
 	go func() {
-		collector.Run(metricsCtx)
+		metricsWG.Wait()
 		close(metricsDone)
 	}()
 
@@ -160,9 +166,9 @@ func Run(version string) {
 	log.Info().Msgf("Starting server on %s", cfg.Addr)
 	if err := proxy.Serve(proxy.ServeOptions{
 		Addr: cfg.Addr, TLSCert: cfg.TLSCert, TLSKey: cfg.TLSKey, TLSClientCA: cfg.TLSClientCA,
-		Store: resourceStore, AgentID: agentID, Provider: awgProvider, Start: awgProvider.RestoreLinks,
+		Store: resourceStore, Provider: awgProvider, Start: awgProvider.RestoreLinks,
 		Handler: func(runtime *resource.Runtime) http.Handler {
-			return api.NewWithResources(hostInfo, store, collector, runtime, middleware.RequestID, middleware.Logging)
+			return api.NewWithResources(hostInfo, store, collector, latency, runtime, middleware.RequestID, middleware.Logging)
 		},
 		Close: func() error {
 			stopMetrics()
@@ -180,7 +186,7 @@ func Run(version string) {
 	}
 }
 
-func loadInterfaces(store storage.Storage) error {
+func loadInterfaces(store awgstorage.Storage) error {
 	awg, err := wgctrl.New()
 	if err != nil {
 		return err

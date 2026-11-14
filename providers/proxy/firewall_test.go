@@ -23,9 +23,10 @@ import (
 )
 
 type fakeFirewallSystem struct {
-	backend string
-	queries bool
-	calls   []string
+	backend    string
+	queries    bool
+	calls      []string
+	inputRules string
 }
 
 func (f *fakeFirewallSystem) Output(name string, args ...string) (string, error) {
@@ -43,6 +44,9 @@ func (f *fakeFirewallSystem) Output(name string, args ...string) (string, error)
 		}
 		return "", errors.New("missing")
 	}
+	if call == "iptables -S INPUT" {
+		return f.inputRules, nil
+	}
 	return "", errors.New("missing")
 }
 
@@ -53,6 +57,39 @@ func (f *fakeFirewallSystem) Run(name string, args ...string) error {
 		return errors.New("missing")
 	}
 	return nil
+}
+
+func TestListenerFirewallRepairsRuleAfterTerminalReject(t *testing.T) {
+	system := &fakeFirewallSystem{inputRules: `-P INPUT ACCEPT
+-A INPUT -i lo -j ACCEPT
+-A INPUT -j REJECT --reject-with icmp-port-unreachable
+-A INPUT -p tcp --dport 443 -j ACCEPT
+`}
+	firewall := &listenerFirewall{system: system}
+	if err := firewall.apply(443, "tcp", true); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(system.calls, "\n")
+	for _, expected := range []string{
+		"iptables -D INPUT -p tcp --dport 443 -j ACCEPT",
+		"iptables -I INPUT 2 -p tcp --dport 443 -j ACCEPT",
+	} {
+		if !strings.Contains(joined, expected) {
+			t.Errorf("missing command %q in:\n%s", expected, joined)
+		}
+	}
+}
+
+func TestListenerFirewallRecognizesProtocolModule(t *testing.T) {
+	system := &fakeFirewallSystem{inputRules: "-P INPUT ACCEPT\n-A INPUT -p tcp -m tcp --dport 443 -j ACCEPT\n-A INPUT -j REJECT --reject-with icmp-port-unreachable\n"}
+	firewall := &listenerFirewall{system: system}
+	if err := firewall.apply(443, "tcp", true); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(system.calls, "\n")
+	if strings.Contains(joined, "iptables -A") || strings.Contains(joined, "iptables -I") || strings.Contains(joined, "iptables -D") {
+		t.Fatalf("normalized TCP rule was changed:\n%s", joined)
+	}
 }
 
 func TestListenerFirewallBackends(t *testing.T) {

@@ -28,6 +28,8 @@ import (
 	"strings"
 	"time"
 
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
+
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
 	"github.com/ks-tool/vpn-agent/v2/models"
 	"github.com/ks-tool/vpn-agent/v2/storage"
@@ -53,7 +55,7 @@ type clientConfigArguments struct {
 }
 
 type secretArguments struct {
-	PrivateKey   string `json:"privateKey" jsonschema:"required,minLength=1,format=password"`
+	PrivateKey   string `json:"privateKey,omitempty" jsonschema:"format=password"`
 	PresharedKey string `json:"presharedKey,omitempty" jsonschema:"format=password"`
 }
 
@@ -126,7 +128,7 @@ func (p *Provider) validatePeer(_ context.Context, item models.Resource) error {
 		return errors.New("peer name is required")
 	}
 	if spec.PublicKey != "" {
-		if _, err := models.ParseKey(spec.PublicKey); err != nil {
+		if _, err := awgmodels.ParseKey(spec.PublicKey); err != nil {
 			return fmt.Errorf("invalid peer public key: %w", err)
 		}
 		if p.resources != nil {
@@ -177,21 +179,21 @@ func (p *Provider) reconcilePeer(_ context.Context, item models.Resource) (json.
 	}
 	privateKey := state.PrivateKey
 	publicKeyValue := spec.PublicKey
-	if publicKeyValue == "" && !models.IsEmpty(privateKey) {
+	if publicKeyValue == "" && !awgmodels.IsEmpty(privateKey) {
 		publicKeyValue = publicKeyString(privateKey)
 	}
 	if publicKeyValue == "" {
-		privateKey, err = models.GeneratePrivateKey()
+		privateKey, err = awgmodels.GeneratePrivateKey()
 		if err != nil {
 			return nil, err
 		}
 		publicKeyValue = publicKeyString(privateKey)
 	}
-	publicKey, err := models.ParseKey(publicKeyValue)
+	publicKey, err := awgmodels.ParseKey(publicKeyValue)
 	if err != nil {
 		return nil, err
 	}
-	if !models.IsEmpty(privateKey) && privateKey.PublicKey() != publicKey {
+	if !awgmodels.IsEmpty(privateKey) && privateKey.PublicKey() != publicKey {
 		return nil, errors.New("stored private key does not match peer public key")
 	}
 	old, err := p.store.Get(interfaceSpec.Interface)
@@ -199,13 +201,13 @@ func (p *Provider) reconcilePeer(_ context.Context, item models.Resource) (json.
 		return nil, err
 	}
 	cfg := *old
-	cfg.Peers = make([]models.InterfacePeer, 0, len(old.Peers))
+	cfg.Peers = make([]awgmodels.InterfacePeer, 0, len(old.Peers))
 	for _, existing := range old.Peers {
 		if state.PreviousPublicKey == "" || existing.Key.String() != state.PreviousPublicKey {
 			cfg.Peers = append(cfg.Peers, existing)
 		}
 	}
-	peer := models.InterfacePeer{
+	peer := awgmodels.InterfacePeer{
 		Key: publicKey, AllowedIPs: spec.AllowedIPs, Disabled: spec.Disabled,
 		KeepaliveInterval: time.Duration(spec.KeepaliveSeconds) * time.Second,
 	}
@@ -232,7 +234,7 @@ func (p *Provider) reconcilePeer(_ context.Context, item models.Resource) (json.
 	if err := p.store.Set(&cfg); err != nil {
 		return nil, err
 	}
-	if !models.IsEmpty(privateKey) {
+	if !awgmodels.IsEmpty(privateKey) {
 		if err := p.secrets.put(item.ID, secretRecord{Interface: interfaceSpec.Interface, PrivateKey: privateKey, PresharedKey: state.PresharedKey}); err != nil {
 			return nil, err
 		}
@@ -245,7 +247,7 @@ func (p *Provider) reconcilePeer(_ context.Context, item models.Resource) (json.
 	}
 	return json.Marshal(map[string]any{
 		"interface": interfaceSpec.Interface, "publicKey": publicKeyValue,
-		"secretMigrationPending": models.IsEmpty(privateKey),
+		"secretMigrationPending": len(spec.UserRef) > 0 && awgmodels.IsEmpty(privateKey),
 	})
 }
 
@@ -263,7 +265,7 @@ func (p *Provider) deletePeer(_ context.Context, item models.Resource) error {
 		return err
 	}
 	cfg := *old
-	cfg.Peers = make([]models.InterfacePeer, 0, len(old.Peers))
+	cfg.Peers = make([]awgmodels.InterfacePeer, 0, len(old.Peers))
 	for _, peer := range old.Peers {
 		if peer.Key.String() != spec.PublicKey {
 			cfg.Peers = append(cfg.Peers, peer)
@@ -312,7 +314,7 @@ func (p *Provider) renderClientConfig(item models.Resource, rawArguments json.Ra
 		return models.ActionResult{}, err
 	}
 	state, err := p.secrets.get(item.ID)
-	if err != nil || models.IsEmpty(state.PrivateKey) {
+	if err != nil || awgmodels.IsEmpty(state.PrivateKey) {
 		return models.ActionResult{}, errors.New("peer private key is not available: secret migration is pending")
 	}
 	_, interfaceSpec, err := p.peerInterface(spec.InterfaceRef)
@@ -323,7 +325,7 @@ func (p *Provider) renderClientConfig(item models.Resource, rawArguments json.Ra
 	if err != nil {
 		return models.ActionResult{}, err
 	}
-	var peer *models.InterfacePeer
+	var peer *awgmodels.InterfacePeer
 	for i := range iface.Peers {
 		if iface.Peers[i].Key.String() == spec.PublicKey {
 			peer = &iface.Peers[i]
@@ -359,7 +361,7 @@ func (p *Provider) renderClientConfig(item models.Resource, rawArguments json.Ra
 }
 
 func (p *Provider) rotatePeerKeys(item models.Resource) (models.ActionResult, error) {
-	privateKey, err := models.GeneratePrivateKey()
+	privateKey, err := awgmodels.GeneratePrivateKey()
 	if err != nil {
 		return models.ActionResult{}, err
 	}
@@ -396,22 +398,30 @@ func (p *Provider) importPeerSecret(item models.Resource, rawArguments json.RawM
 	if err := json.Unmarshal(rawArguments, &arguments); err != nil {
 		return models.ActionResult{}, err
 	}
-	privateKey, err := models.ParseKey(arguments.PrivateKey)
-	if err != nil {
-		return models.ActionResult{}, err
+	if len(arguments.PrivateKey) == 0 && len(arguments.PresharedKey) == 0 {
+		return models.ActionResult{}, errors.New("private key or preshared key is required")
 	}
 	spec, err := p.decodePeer(item.Spec)
 	if err != nil {
 		return models.ActionResult{}, err
 	}
-	publicKeyValue := publicKeyString(privateKey)
-	if spec.PublicKey != "" && spec.PublicKey != publicKeyValue {
-		return models.ActionResult{}, errors.New("private key does not match peer public key")
+	var privateKey awgmodels.Key
+	if len(arguments.PrivateKey) > 0 {
+		privateKey, err = awgmodels.ParseKey(arguments.PrivateKey)
+		if err != nil {
+			return models.ActionResult{}, err
+		}
+		publicKeyValue := publicKeyString(privateKey)
+		if len(spec.PublicKey) > 0 && spec.PublicKey != publicKeyValue {
+			return models.ActionResult{}, errors.New("private key does not match peer public key")
+		}
+		spec.PublicKey = publicKeyValue
+	} else if len(spec.PublicKey) == 0 {
+		return models.ActionResult{}, errors.New("public key is required when importing only a preshared key")
 	}
-	spec.PublicKey = publicKeyValue
-	var presharedKey *models.Key
-	if arguments.PresharedKey != "" {
-		parsed, err := models.ParseKey(arguments.PresharedKey)
+	var presharedKey *awgmodels.Key
+	if len(arguments.PresharedKey) > 0 {
+		parsed, err := awgmodels.ParseKey(arguments.PresharedKey)
 		if err != nil {
 			return models.ActionResult{}, err
 		}

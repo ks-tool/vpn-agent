@@ -153,9 +153,7 @@ type netStats struct {
 }
 
 // readNetStats sums rx/tx bytes across every interface in /proc/net/dev
-// except loopback — a simple host-wide throughput figure rather than
-// per-interface (per-WireGuard-interface peer traffic is tracked
-// separately and far more usefully via wgctrl, see collector.go).
+// except loopback into a host-wide throughput figure.
 func readNetStats() (netStats, error) {
 	f, err := os.Open("/proc/net/dev")
 	if err != nil {

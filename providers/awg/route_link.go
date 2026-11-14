@@ -30,17 +30,19 @@ import (
 	"strings"
 	"time"
 
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
+
 	"github.com/ks-tool/vpn-agent/v2/models"
 	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
 	"github.com/ks-tool/vpn-agent/v2/storage"
 )
 
 type routeClientConfig struct {
-	PrivateKey models.Key           `json:"privateKey"`
-	Address    string               `json:"address"`
-	Peer       models.InterfacePeer `json:"peer"`
-	Interface  InterfaceSpec        `json:"interface"`
-	SOCKS5     string               `json:"socks5"`
+	PrivateKey awgmodels.Key           `json:"privateKey"`
+	Address    string                  `json:"address"`
+	Peer       awgmodels.InterfacePeer `json:"peer"`
+	Interface  InterfaceSpec           `json:"interface"`
+	SOCKS5     string                  `json:"socks5"`
 }
 
 func (p *Provider) prepareRouteLink(_ context.Context, link models.Link, endpoint models.LinkEndpoint) (models.LinkOffer, error) {
@@ -89,7 +91,7 @@ func (p *Provider) prepareRouteLink(_ context.Context, link models.Link, endpoin
 	if err != nil {
 		return models.LinkOffer{}, err
 	}
-	clientKey, err := models.GeneratePrivateKey()
+	clientKey, err := awgmodels.GeneratePrivateKey()
 	if err != nil {
 		return models.LinkOffer{}, err
 	}
@@ -97,8 +99,8 @@ func (p *Provider) prepareRouteLink(_ context.Context, link models.Link, endpoin
 	if err != nil {
 		return models.LinkOffer{}, err
 	}
-	clientPeer := models.InterfacePeer{Key: clientKey.PublicKey(), AllowedIPs: []string{clientAddress}}
-	remotePeer := models.InterfacePeer{
+	clientPeer := awgmodels.InterfacePeer{Key: clientKey.PublicKey(), AllowedIPs: []string{clientAddress}}
+	remotePeer := awgmodels.InterfacePeer{
 		Key: iface.PrivateKey.PublicKey(), Endpoint: routeRemoteEndpoint(endpoint, spec), AllowedIPs: []string{"0.0.0.0/0"}, KeepaliveInterval: 25 * time.Second,
 	}
 	routeID, err := proxy.FindRouteID(link.ID, func(candidate string) bool {
@@ -138,12 +140,12 @@ func (p *Provider) prepareRouteLink(_ context.Context, link models.Link, endpoin
 	return offer, p.links.put(link.ID, state)
 }
 
-func preparedRouteLinkOffer(offer models.LinkOffer, iface models.InterfaceConfig, spec InterfaceSpec, state linkState) (models.LinkOffer, error) {
+func preparedRouteLinkOffer(offer models.LinkOffer, iface awgmodels.InterfaceConfig, spec InterfaceSpec, state linkState) (models.LinkOffer, error) {
 	var clientConfig routeClientConfig
 	if err := json.Unmarshal(state.Driver.Config, &clientConfig); err != nil {
 		return models.LinkOffer{}, err
 	}
-	clientPeer := models.InterfacePeer{Key: clientConfig.PrivateKey.PublicKey(), AllowedIPs: []string{clientConfig.Address}}
+	clientPeer := awgmodels.InterfacePeer{Key: clientConfig.PrivateKey.PublicKey(), AllowedIPs: []string{clientConfig.Address}}
 	remoteSpec := awgLinkOffer{PublicKey: publicKeyString(iface.PrivateKey), Interface: spec, Driver: state.Driver, RoutePeer: &clientPeer}
 	data, err := json.Marshal(remoteSpec)
 	if err != nil {
@@ -216,13 +218,13 @@ func (p *Provider) commitRouteLink(_ context.Context, link models.Link, endpoint
 		return err
 	}
 	cfg := *old
-	cfg.Peers = append([]models.InterfacePeer(nil), old.Peers...)
+	cfg.Peers = append([]awgmodels.InterfacePeer(nil), old.Peers...)
 	cfg.PreUp = append([]string(nil), old.PreUp...)
 	cfg.PostUp = append([]string(nil), old.PostUp...)
 	cfg.PreDown = append([]string(nil), old.PreDown...)
 	cfg.PostDown = append([]string(nil), old.PostDown...)
 	removeLinkArtifacts(&cfg, state)
-	publicKey, err := models.ParseKey(state.PeerPublicKey)
+	publicKey, err := awgmodels.ParseKey(state.PeerPublicKey)
 	if err != nil {
 		return err
 	}
@@ -237,7 +239,7 @@ func (p *Provider) commitRouteLink(_ context.Context, link models.Link, endpoint
 	if len(clientAddress) == 0 {
 		return errors.New("route client address is missing")
 	}
-	cfg.Peers = append(cfg.Peers, models.InterfacePeer{Key: publicKey, AllowedIPs: []string{clientAddress}})
+	cfg.Peers = append(cfg.Peers, awgmodels.InterfacePeer{Key: publicKey, AllowedIPs: []string{clientAddress}})
 	sum := sha256.Sum256([]byte(link.ID))
 	state.Mark = "0x" + hex.EncodeToString(sum[:4])
 	state.PreUp = []string{firewallHook("exit", "add", 0, state.Mark)}
@@ -276,7 +278,7 @@ func (p *Provider) deleteRouteLink(_ context.Context, link models.Link, _ models
 		return err
 	}
 	cfg := *old
-	cfg.Peers = append([]models.InterfacePeer(nil), old.Peers...)
+	cfg.Peers = append([]awgmodels.InterfacePeer(nil), old.Peers...)
 	cfg.PreUp = append([]string(nil), old.PreUp...)
 	cfg.PostUp = append([]string(nil), old.PostUp...)
 	cfg.PreDown = append([]string(nil), old.PreDown...)
@@ -319,7 +321,7 @@ func routeRemoteEndpoint(endpoint models.LinkEndpoint, spec InterfaceSpec) strin
 	return net.JoinHostPort(endpoint.Address, strconv.Itoa(int(spec.ListenPort)))
 }
 
-func routeClientAddress(config models.InterfaceConfig, linkID string) (string, error) {
+func routeClientAddress(config awgmodels.InterfaceConfig, linkID string) (string, error) {
 	_, network, err := net.ParseCIDR(config.Address)
 	if err != nil {
 		return "", err
