@@ -23,7 +23,7 @@ import (
 	"os"
 	"path/filepath"
 
-	agentmodels "github.com/ks-tool/vpn-agent/v2/models"
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
 	"github.com/ks-tool/vpn-agent/v2/storage"
 
 	"github.com/natefinch/atomic"
@@ -46,12 +46,12 @@ func (dir *Dir) Close() error {
 	return nil
 }
 
-func (dir *Dir) List() ([]agentmodels.InterfaceConfig, error) {
+func (dir *Dir) List() ([]awgmodels.InterfaceConfig, error) {
 	entries, err := os.ReadDir(dir.root)
 	if err != nil {
 		return nil, err
 	}
-	list := make([]agentmodels.InterfaceConfig, 0)
+	list := make([]awgmodels.InterfaceConfig, 0)
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ext {
 			continue
@@ -65,7 +65,7 @@ func (dir *Dir) List() ([]agentmodels.InterfaceConfig, error) {
 	return list, nil
 }
 
-func (dir *Dir) Set(cfg *agentmodels.InterfaceConfig) error {
+func (dir *Dir) Set(cfg *awgmodels.InterfaceConfig) error {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(cfg); err != nil {
 		return err
@@ -74,12 +74,12 @@ func (dir *Dir) Set(cfg *agentmodels.InterfaceConfig) error {
 	return atomic.WriteFile(filepath.Join(dir.root, cfg.Interface)+ext, &buf)
 }
 
-func (dir *Dir) Get(iface string) (*agentmodels.InterfaceConfig, error) {
+func (dir *Dir) Get(iface string) (*awgmodels.InterfaceConfig, error) {
 	filename := filepath.Join(dir.root, iface) + ext
 	return dir.get(filename)
 }
 
-func (dir *Dir) get(filename string) (*agentmodels.InterfaceConfig, error) {
+func (dir *Dir) get(filename string) (*awgmodels.InterfaceConfig, error) {
 	fi, err := os.Open(filename)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -89,7 +89,7 @@ func (dir *Dir) get(filename string) (*agentmodels.InterfaceConfig, error) {
 	}
 	defer func() { _ = fi.Close() }()
 
-	var cfg agentmodels.InterfaceConfig
+	var cfg awgmodels.InterfaceConfig
 	if err = json.NewDecoder(fi).Decode(&cfg); err != nil {
 		return nil, err
 	}

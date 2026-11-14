@@ -19,13 +19,13 @@ package storage
 import (
 	"io"
 
-	"github.com/ks-tool/vpn-agent/v2/models"
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
 )
 
 type Storage interface {
 	io.Closer
-	List() ([]models.InterfaceConfig, error)
-	Set(cfg *models.InterfaceConfig) error
-	Get(iface string) (*models.InterfaceConfig, error)
+	List() ([]awgmodels.InterfaceConfig, error)
+	Set(cfg *awgmodels.InterfaceConfig) error
+	Get(iface string) (*awgmodels.InterfaceConfig, error)
 	Delete(iface string) error
 }

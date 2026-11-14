@@ -23,7 +23,8 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/ks-tool/vpn-agent/v2/models"
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
+
 	"github.com/ks-tool/vpn-agent/v2/storage"
 )
 
@@ -51,13 +52,13 @@ func validImportName(name string) bool {
 // interface from the host's standard locations (importConfDirs), the first one
 // found winning. storage.ErrNotFound when none exists (→ HTTP 404),
 // ErrInvalidInterfaceName for a name that could escape those directories.
-func ReadImportSource(name string) (*models.ImportSource, error) {
+func ReadImportSource(name string) (*awgmodels.ImportSource, error) {
 	return readImportSource(importConfDirs, name)
 }
 
 // readImportSource is ReadImportSource with the search dirs injected, so tests
 // can point it at a temp directory.
-func readImportSource(dirs []string, name string) (*models.ImportSource, error) {
+func readImportSource(dirs []string, name string) (*awgmodels.ImportSource, error) {
 	if !validImportName(name) {
 		return nil, fmt.Errorf("%w: %q", ErrInvalidInterfaceName, name)
 	}
@@ -65,7 +66,7 @@ func readImportSource(dirs []string, name string) (*models.ImportSource, error) 
 		path := filepath.Join(dir, name+".conf")
 		data, err := os.ReadFile(path)
 		if err == nil {
-			return &models.ImportSource{Path: path, Content: string(data)}, nil
+			return &awgmodels.ImportSource{Path: path, Content: string(data)}, nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("read %s: %w", path, err)

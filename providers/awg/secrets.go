@@ -19,15 +19,16 @@ package awg
 import (
 	"sync"
 
-	"github.com/ks-tool/vpn-agent/v2/models"
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
+
 	"github.com/ks-tool/vpn-agent/v2/storage"
 )
 
 type secretRecord struct {
-	Interface         string      `json:"interface"`
-	PrivateKey        models.Key  `json:"privateKey"`
-	PresharedKey      *models.Key `json:"presharedKey,omitempty"`
-	PreviousPublicKey string      `json:"previousPublicKey,omitempty"`
+	Interface         string         `json:"interface"`
+	PrivateKey        awgmodels.Key  `json:"privateKey"`
+	PresharedKey      *awgmodels.Key `json:"presharedKey,omitempty"`
+	PreviousPublicKey string         `json:"previousPublicKey,omitempty"`
 }
 
 type secretStore struct {

@@ -5,7 +5,7 @@
   you may not use this file except in compliance with the License.
   You may obtain a copy of the License at
 
-  	http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
   Unless required by applicable law or agreed to in writing, software
   distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,27 +18,22 @@ package metrics
 
 import (
 	"context"
-	"encoding/json"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
+
 	"github.com/Jipok/wgctrl-go/wgtypes"
-	"github.com/ks-tool/vpn-agent/v2/models"
 )
 
 func TestLatencyCollectorMeasuresPeerAndCalculatesP95(t *testing.T) {
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(models.MetricsSnapshot{Interfaces: []models.InterfaceSnapshot{{
+	collector := NewLatencyCollector(func() awgmodels.MetricsSnapshot {
+		return awgmodels.MetricsSnapshot{Interfaces: []awgmodels.InterfaceSnapshot{{
 			Interface: "awg0",
-			Peers:     []models.PeerSnapshot{{PublicKey: "peer", ProbeAddress: "10.0.0.2"}},
-		}}})
-	}))
-	defer provider.Close()
-
-	collector := NewLatencyCollector(provider.URL, time.Minute)
+			Peers:     []awgmodels.PeerSnapshot{{PublicKey: "peer", ProbeAddress: "10.0.0.2"}},
+		}}}
+	}, time.Minute)
 	collector.probe = func(_ context.Context, iface, address string) (time.Duration, error) {
 		if iface != "awg0" || address != "10.0.0.2" {
 			t.Fatalf("unexpected probe %s/%s", iface, address)
@@ -47,7 +42,7 @@ func TestLatencyCollectorMeasuresPeerAndCalculatesP95(t *testing.T) {
 	}
 	collector.collectOnce(context.Background())
 
-	snapshot := models.InterfaceSnapshot{Interface: "awg0", Peers: []models.PeerSnapshot{{PublicKey: "peer"}}}
+	snapshot := awgmodels.InterfaceSnapshot{Interface: "awg0", Peers: []awgmodels.PeerSnapshot{{PublicKey: "peer"}}}
 	collector.Apply(&snapshot)
 	if snapshot.Peers[0].LatencyP95Ms == nil || *snapshot.Peers[0].LatencyP95Ms != 42 {
 		t.Fatalf("latency p95 = %v, want 42", snapshot.Peers[0].LatencyP95Ms)

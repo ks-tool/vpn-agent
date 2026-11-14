@@ -16,7 +16,7 @@
 
 package awg
 
-import "github.com/ks-tool/vpn-agent/v2/models"
+import awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
 
 const APIVersion = "awg.ks-tool.dev/v1"
 
@@ -51,8 +51,8 @@ type InterfaceSpec struct {
 	I5 *string `json:"i5,omitempty"`
 }
 
-func (s InterfaceSpec) config() models.InterfaceConfig {
-	return models.InterfaceConfig{
+func (s InterfaceSpec) config() awgmodels.InterfaceConfig {
+	return awgmodels.InterfaceConfig{
 		Interface: s.Interface, ListenPort: s.ListenPort, Address: s.Address,
 		MTU: s.MTU, DNS: s.DNS, Disabled: s.Disabled, Table: s.Table, FirewallMark: s.FirewallMark,
 		Jc: s.Jc, Jmin: s.Jmin, Jmax: s.Jmax,
@@ -62,7 +62,7 @@ func (s InterfaceSpec) config() models.InterfaceConfig {
 	}
 }
 
-func interfaceSpecFromConfig(cfg models.InterfaceConfig) InterfaceSpec {
+func interfaceSpecFromConfig(cfg awgmodels.InterfaceConfig) InterfaceSpec {
 	return InterfaceSpec{
 		Interface: cfg.Interface, ListenPort: cfg.ListenPort, Address: cfg.Address,
 		MTU: cfg.MTU, DNS: cfg.DNS, Disabled: cfg.Disabled, Table: cfg.Table, FirewallMark: cfg.FirewallMark,

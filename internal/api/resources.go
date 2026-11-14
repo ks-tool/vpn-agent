@@ -21,19 +21,11 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/ks-tool/vpn-agent/v2/internal/metrics"
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
 	"github.com/ks-tool/vpn-agent/v2/models"
 	"github.com/ks-tool/vpn-agent/v2/mux"
 	"github.com/ks-tool/vpn-agent/v2/storage"
 )
-
-func NewWithResources(hostInfo models.HostInfo, store storage.Storage, collector *metrics.Collector, runtime *resource.Runtime, mws ...mux.Middleware) http.Handler {
-	router := mux.NewServeMux()
-	router.Handle("/v1/", NewResourceHandler(runtime, mws...))
-	router.Handle("/", New(hostInfo, store, collector, mws...))
-	return router
-}
 
 func NewResourceHandler(runtime *resource.Runtime, mws ...mux.Middleware) http.Handler {
 	h := &resourceHandler{runtime: runtime}

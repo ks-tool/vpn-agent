@@ -25,21 +25,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	awgstorage "github.com/ks-tool/vpn-agent/v2/providers/awg/storage"
+
 	"github.com/ks-tool/vpn-agent/v2/internal/agent"
-	"github.com/ks-tool/vpn-agent/v2/internal/api"
 	agentconfig "github.com/ks-tool/vpn-agent/v2/internal/config"
-	"github.com/ks-tool/vpn-agent/v2/internal/kernel"
-	"github.com/ks-tool/vpn-agent/v2/internal/metrics"
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
-	"github.com/ks-tool/vpn-agent/v2/internal/service"
-	"github.com/ks-tool/vpn-agent/v2/internal/userspace"
 	"github.com/ks-tool/vpn-agent/v2/mux/middleware"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/api"
 	providerdeploy "github.com/ks-tool/vpn-agent/v2/providers/awg/deploy"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/kernel"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/metrics"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/service"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/storage/fs"
+	"github.com/ks-tool/vpn-agent/v2/providers/awg/userspace"
 	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
-	"github.com/ks-tool/vpn-agent/v2/storage"
-	"github.com/ks-tool/vpn-agent/v2/storage/fs"
 
 	"github.com/Jipok/wgctrl-go"
 	"github.com/rs/zerolog"
@@ -138,11 +140,22 @@ func Run(version string) {
 	if err := collector.LoadHistory(); err != nil {
 		log.Warn().Err(err).Msg("failed to load persisted metrics history")
 	}
+	latency := metrics.NewLatencyCollector(collector.Snapshot, cfg.MetricsInterval)
 	metricsCtx, stopMetrics := context.WithCancel(context.Background())
 	defer stopMetrics()
+	var metricsWG sync.WaitGroup
+	metricsWG.Add(2)
+	go func() {
+		defer metricsWG.Done()
+		collector.Run(metricsCtx)
+	}()
+	go func() {
+		defer metricsWG.Done()
+		latency.Run(metricsCtx)
+	}()
 	metricsDone := make(chan struct{})
 	go func() {
-		collector.Run(metricsCtx)
+		metricsWG.Wait()
 		close(metricsDone)
 	}()
 
@@ -155,7 +168,7 @@ func Run(version string) {
 		Addr: cfg.Addr, TLSCert: cfg.TLSCert, TLSKey: cfg.TLSKey, TLSClientCA: cfg.TLSClientCA,
 		Store: resourceStore, Provider: awgProvider, Start: awgProvider.RestoreLinks,
 		Handler: func(runtime *resource.Runtime) http.Handler {
-			return api.NewWithResources(hostInfo, store, collector, runtime, middleware.RequestID, middleware.Logging)
+			return api.NewWithResources(hostInfo, store, collector, latency, runtime, middleware.RequestID, middleware.Logging)
 		},
 		Close: func() error {
 			stopMetrics()
@@ -173,7 +186,7 @@ func Run(version string) {
 	}
 }
 
-func loadInterfaces(store storage.Storage) error {
+func loadInterfaces(store awgstorage.Storage) error {
 	awg, err := wgctrl.New()
 	if err != nil {
 		return err

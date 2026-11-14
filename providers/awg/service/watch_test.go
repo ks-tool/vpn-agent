@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ks-tool/vpn-agent/v2/models"
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -48,7 +48,7 @@ func TestIfaceNameFromConfigPath(t *testing.T) {
 func TestHandleStorageEventOnlyActsOnRemoveOfConfigFiles(t *testing.T) {
 	var deleted []string
 	orig := deleteInterface
-	deleteInterface = func(cfg models.InterfaceConfig) error {
+	deleteInterface = func(cfg awgmodels.InterfaceConfig) error {
 		deleted = append(deleted, cfg.Interface)
 		return nil
 	}
@@ -79,7 +79,7 @@ func TestWatchStorageReactsToRealFileRemoval(t *testing.T) {
 
 	done := make(chan string, 1)
 	orig := deleteInterface
-	deleteInterface = func(cfg models.InterfaceConfig) error {
+	deleteInterface = func(cfg awgmodels.InterfaceConfig) error {
 		done <- cfg.Interface
 		return nil
 	}

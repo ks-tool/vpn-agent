@@ -29,6 +29,9 @@ import (
 	"regexp"
 	"strings"
 
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
+	awgstorage "github.com/ks-tool/vpn-agent/v2/providers/awg/storage"
+
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
 	"github.com/ks-tool/vpn-agent/v2/models"
 	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
@@ -41,7 +44,7 @@ import (
 var interfaceName = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 
 type Network interface {
-	One(*models.InterfaceConfig, models.InterfaceConfig) error
+	One(*awgmodels.InterfaceConfig, awgmodels.InterfaceConfig) error
 	Delete(string) error
 }
 
@@ -55,7 +58,7 @@ type interfaceSecretArguments struct {
 
 type Provider struct {
 	version        string
-	store          storage.Storage
+	store          awgstorage.Storage
 	resources      resource.Store
 	secrets        *secretStore
 	links          *linkStore
@@ -67,7 +70,7 @@ type Provider struct {
 	peerValidator  *packschemavalidator.Compiled
 }
 
-func New(store storage.Storage, stateRoot string, network Network, version string, inventory ...resource.Store) (*Provider, error) {
+func New(store awgstorage.Storage, stateRoot string, network Network, version string, inventory ...resource.Store) (*Provider, error) {
 	secrets := newSecretStore()
 	links, err := newLinkStore(filepath.Join(stateRoot, "links"))
 	if err != nil {
@@ -167,7 +170,7 @@ func (p *Provider) reconcileInterface(_ context.Context, resource models.Resourc
 	if err != nil {
 		return nil, err
 	}
-	var previous *models.InterfaceConfig
+	var previous *awgmodels.InterfaceConfig
 	old, err := p.store.Get(spec.Interface)
 	if err == nil {
 		previous = old
@@ -190,8 +193,8 @@ func (p *Provider) reconcileInterface(_ context.Context, resource models.Resourc
 		}
 	}
 	replaceInterfaceFirewallHooks(&cfg)
-	if models.IsEmpty(cfg.PrivateKey) {
-		cfg.PrivateKey, err = models.GeneratePrivateKey()
+	if awgmodels.IsEmpty(cfg.PrivateKey) {
+		cfg.PrivateKey, err = awgmodels.GeneratePrivateKey()
 		if err != nil {
 			return nil, err
 		}
@@ -206,7 +209,7 @@ func (p *Provider) reconcileInterface(_ context.Context, resource models.Resourc
 	return status, err
 }
 
-func publicKeyString(privateKey models.Key) string {
+func publicKeyString(privateKey awgmodels.Key) string {
 	publicKey := privateKey.PublicKey()
 	return publicKey.String()
 }
@@ -216,7 +219,7 @@ func (p *Provider) importInterfaceSecret(item models.Resource, rawArguments json
 	if err := json.Unmarshal(rawArguments, &arguments); err != nil {
 		return models.ActionResult{}, err
 	}
-	privateKey, err := models.ParseKey(arguments.PrivateKey)
+	privateKey, err := awgmodels.ParseKey(arguments.PrivateKey)
 	if err != nil {
 		return models.ActionResult{}, err
 	}
@@ -224,7 +227,7 @@ func (p *Provider) importInterfaceSecret(item models.Resource, rawArguments json
 	if err != nil {
 		return models.ActionResult{}, err
 	}
-	var previous *models.InterfaceConfig
+	var previous *awgmodels.InterfaceConfig
 	cfg := spec.config()
 	old, err := p.store.Get(spec.Interface)
 	if err == nil {

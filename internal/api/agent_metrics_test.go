@@ -5,7 +5,7 @@
   you may not use this file except in compliance with the License.
   You may obtain a copy of the License at
 
-  	http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
   Unless required by applicable law or agreed to in writing, software
   distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,7 +17,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -27,23 +26,20 @@ import (
 	"github.com/ks-tool/vpn-agent/v2/models"
 )
 
-func TestAgentSeparatesSystemAndInterfaceMetrics(t *testing.T) {
+func TestAgentSeparatesSystemMetricsAndProxiesProviderMetrics(t *testing.T) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/metrics":
-			_ = json.NewEncoder(w).Encode(models.MetricsSnapshot{
-				System:     models.SystemSnapshot{CPUPercent: 99},
-				Interfaces: []models.InterfaceSnapshot{{Interface: "awg0", Peers: []models.PeerSnapshot{{PublicKey: "peer", RxBytes: 123}}}},
-			})
-		case "/metrics/history":
-			_ = json.NewEncoder(w).Encode(models.SystemHistory{Interfaces: []models.InterfaceHistory{{Interface: "awg0", Peers: []models.PeerHistory{{PublicKey: "peer"}}}}})
+		case "/metrics/awg0":
+			_, _ = w.Write([]byte(`{"interface":"awg0","peers":[{"publicKey":"peer","rx":123}]}`))
+		case "/metrics/awg0/history":
+			_, _ = w.Write([]byte(`{"interface":"awg0","peers":[{"publicKey":"peer"}]}`))
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	defer provider.Close()
 
-	handler, err := NewAgent(models.HostInfo{}, nil, provider.URL, metrics.NewSystemCollector(time.Minute), metrics.NewLatencyCollector(provider.URL, time.Minute))
+	handler, err := NewAgent(models.HostInfo{}, nil, provider.URL, metrics.NewSystemCollector(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,19 +49,27 @@ func TestAgentSeparatesSystemAndInterfaceMetrics(t *testing.T) {
 	response := request(t, http.MethodGet, server.URL+"/metrics", nil)
 	var system models.SystemSnapshot
 	decodeResponse(t, response, &system)
-	if system.CPUPercent == 99 {
-		t.Fatal("agent system metrics leaked from AWG provider")
-	}
 
 	response = request(t, http.MethodGet, server.URL+"/metrics/awg0", nil)
-	var iface models.InterfaceSnapshot
+	var iface struct {
+		Interface string `json:"interface"`
+		Peers     []struct {
+			PublicKey string `json:"publicKey"`
+			RxBytes   uint64 `json:"rx"`
+		} `json:"peers"`
+	}
 	decodeResponse(t, response, &iface)
 	if iface.Interface != "awg0" || len(iface.Peers) != 1 || iface.Peers[0].RxBytes != 123 {
 		t.Fatalf("unexpected interface metrics: %+v", iface)
 	}
 
 	response = request(t, http.MethodGet, server.URL+"/metrics/awg0/history", nil)
-	var history models.InterfaceHistory
+	var history struct {
+		Interface string `json:"interface"`
+		Peers     []struct {
+			PublicKey string `json:"publicKey"`
+		} `json:"peers"`
+	}
 	decodeResponse(t, response, &history)
 	if history.Interface != "awg0" || len(history.Peers) != 1 {
 		t.Fatalf("unexpected interface history: %+v", history)

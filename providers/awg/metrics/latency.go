@@ -18,16 +18,13 @@ package metrics
 
 import (
 	"context"
-	"encoding/json"
 	"math"
-	"net/http"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/ks-tool/vpn-agent/v2/models"
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
 )
 
 const (
@@ -42,23 +39,21 @@ type latencySample struct {
 }
 
 type LatencyCollector struct {
-	providerURL string
-	interval    time.Duration
-	client      *http.Client
-	probe       func(context.Context, string, string) (time.Duration, error)
-	enabled     atomic.Bool
+	snapshot func() awgmodels.MetricsSnapshot
+	interval time.Duration
+	probe    func(context.Context, string, string) (time.Duration, error)
+	enabled  atomic.Bool
 
 	mu     sync.RWMutex
 	series map[string]map[string][]latencySample
 }
 
-func NewLatencyCollector(providerURL string, interval time.Duration) *LatencyCollector {
+func NewLatencyCollector(snapshot func() awgmodels.MetricsSnapshot, interval time.Duration) *LatencyCollector {
 	c := &LatencyCollector{
-		providerURL: strings.TrimRight(providerURL, "/"),
-		interval:    interval,
-		client:      &http.Client{Timeout: 5 * time.Second},
-		probe:       probeLatency,
-		series:      make(map[string]map[string][]latencySample),
+		snapshot: snapshot,
+		interval: interval,
+		probe:    probeLatency,
+		series:   make(map[string]map[string][]latencySample),
 	}
 	c.enabled.Store(true)
 	return c
@@ -67,7 +62,7 @@ func NewLatencyCollector(providerURL string, interval time.Duration) *LatencyCol
 func (c *LatencyCollector) SetEnabled(enabled bool) { c.enabled.Store(enabled) }
 
 func (c *LatencyCollector) Run(ctx context.Context) {
-	if len(c.providerURL) == 0 {
+	if c.snapshot == nil {
 		return
 	}
 	ticker := time.NewTicker(c.interval)
@@ -84,25 +79,10 @@ func (c *LatencyCollector) Run(ctx context.Context) {
 }
 
 func (c *LatencyCollector) collectOnce(ctx context.Context) {
-	if !c.enabled.Load() || len(c.providerURL) == 0 {
+	if !c.enabled.Load() || c.snapshot == nil {
 		return
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.providerURL+"/metrics", nil)
-	if err != nil {
-		return
-	}
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return
-	}
-	var snapshot models.MetricsSnapshot
-	if err := json.NewDecoder(resp.Body).Decode(&snapshot); err != nil {
-		return
-	}
+	snapshot := c.snapshot()
 
 	sem := make(chan struct{}, latencyConcurrency)
 	var wg sync.WaitGroup
@@ -130,7 +110,7 @@ func (c *LatencyCollector) collectOnce(ctx context.Context) {
 	c.retain(snapshot.Interfaces)
 }
 
-func (c *LatencyCollector) retain(interfaces []models.InterfaceSnapshot) {
+func (c *LatencyCollector) retain(interfaces []awgmodels.InterfaceSnapshot) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for iface, peers := range c.series {
@@ -169,7 +149,7 @@ func (c *LatencyCollector) record(iface, key string, ts time.Time, ms float64) {
 	peers[key] = append(series, latencySample{ts: ts, ms: ms})
 }
 
-func (c *LatencyCollector) Apply(snapshot *models.InterfaceSnapshot) {
+func (c *LatencyCollector) Apply(snapshot *awgmodels.InterfaceSnapshot) {
 	cutoff := time.Now().Add(-latencyWindow)
 	c.mu.Lock()
 	defer c.mu.Unlock()

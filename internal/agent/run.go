@@ -130,22 +130,17 @@ func Run(version string) {
 	if err := systemMetrics.LoadHistory(); err != nil {
 		log.Warn().Err(err).Msg("failed to load persisted system metrics")
 	}
-	latencyMetrics := metrics.NewLatencyCollector(cfg.LegacyProxy, cfg.MetricsInterval)
 	metricsCtx, stopMetrics := context.WithCancel(context.Background())
 	defer stopMetrics()
 	var metricsWG sync.WaitGroup
-	metricsWG.Add(2)
+	metricsWG.Add(1)
 	go func() {
 		defer metricsWG.Done()
 		systemMetrics.Run(metricsCtx)
 	}()
-	go func() {
-		defer metricsWG.Done()
-		latencyMetrics.Run(metricsCtx)
-	}()
 
 	hostInfo := GatherHostInfo(version)
-	handler, err := api.NewAgent(hostInfo, resourceRuntime, cfg.LegacyProxy, systemMetrics, latencyMetrics, middleware.RequestID, middleware.Logging)
+	handler, err := api.NewAgent(hostInfo, resourceRuntime, cfg.LegacyProxy, systemMetrics, middleware.RequestID, middleware.Logging)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to configure legacy provider proxy")
 	}

@@ -27,7 +27,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ks-tool/vpn-agent/v2/models"
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
 )
 
 const firewallExecutable = "/usr/local/bin/vpn-provider-awg"
@@ -88,11 +88,11 @@ func firewallHook(kind, action string, listenPort uint16, mark string) string {
 	return command
 }
 
-func interfaceFirewallHooks(cfg models.InterfaceConfig) (string, string) {
+func interfaceFirewallHooks(cfg awgmodels.InterfaceConfig) (string, string) {
 	return firewallHook("interface", "add", cfg.ListenPort, ""), firewallHook("interface", "remove", cfg.ListenPort, "")
 }
 
-func replaceInterfaceFirewallHooks(cfg *models.InterfaceConfig) {
+func replaceInterfaceFirewallHooks(cfg *awgmodels.InterfaceConfig) {
 	cfg.PreUp = removeInterfaceFirewallHooks(cfg.PreUp)
 	cfg.PostDown = removeInterfaceFirewallHooks(cfg.PostDown)
 	up, down := interfaceFirewallHooks(*cfg)
