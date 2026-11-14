@@ -46,12 +46,12 @@ func coreRelease(options map[string]any) (string, string, error) {
 		artifact = "https://github.com/HyNetworks/hysteria/releases/download/app/v2.13.0/hysteria-linux-arm64"
 		checksum = "a68a61a84452ca250ce0368202521965ca9cc9d801a404f1dc9008ac6cf677a7"
 	default:
-		return "", "", fmt.Errorf("Hysteria 2 core does not support %s", runtime.GOARCH)
+		return "", "", fmt.Errorf("hysteria 2 core does not support %s", runtime.GOARCH)
 	}
 	for name, value := range options {
 		text, ok := value.(string)
 		if !ok || len(text) == 0 {
-			return "", "", fmt.Errorf("Hysteria 2 provider option %s must be a non-empty string", name)
+			return "", "", fmt.Errorf("hysteria 2 provider option %s must be a non-empty string", name)
 		}
 		switch name {
 		case "coreArtifact":

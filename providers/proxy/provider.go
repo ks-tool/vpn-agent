@@ -172,12 +172,13 @@ func (p *Provider) reconcilePeer(item models.Resource) (json.RawMessage, error) 
 	if err != nil {
 		return nil, err
 	}
-	secret, err := p.secrets.get(item.ID)
+	_, err = p.secrets.get(item.ID)
 	if storage.IsNotFound(err) {
-		secret, err = p.adapter.NewSecret()
-		if err == nil {
-			err = p.secrets.put(item.ID, secret)
+		secret, secretErr := p.adapter.NewSecret()
+		if secretErr != nil {
+			return nil, secretErr
 		}
+		err = p.secrets.put(item.ID, secret)
 	}
 	if err != nil {
 		return nil, err

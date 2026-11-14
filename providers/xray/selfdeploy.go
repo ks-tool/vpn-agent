@@ -46,12 +46,12 @@ func coreRelease(options map[string]any) (string, string, error) {
 		artifact = "https://github.com/XTLS/Xray-core/releases/download/v26.11.9/Xray-linux-arm64-v8a.zip"
 		checksum = "64ed6858982a7f5eb85d88b811089063bd4f17561f4c8f44e0f1dc8e6f6430be"
 	default:
-		return "", "", fmt.Errorf("Xray core does not support %s", runtime.GOARCH)
+		return "", "", fmt.Errorf("xray core does not support %s", runtime.GOARCH)
 	}
 	for name, value := range options {
 		text, ok := value.(string)
 		if !ok || len(text) == 0 {
-			return "", "", fmt.Errorf("Xray provider option %s must be a non-empty string", name)
+			return "", "", fmt.Errorf("xray provider option %s must be a non-empty string", name)
 		}
 		switch name {
 		case "coreArtifact":

@@ -16,6 +16,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Run unit tests
+        run: go test ./...
+
       - name: Prepare lint targets
         id: prep
         run: |

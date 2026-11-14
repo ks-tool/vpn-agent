@@ -231,10 +231,15 @@ func (s *Supervisor) supervise(ctx context.Context, current *supervisedProvider)
 func stopProcess(cmd *exec.Cmd, done <-chan error) {
 	_ = cmd.Process.Signal(syscall.SIGTERM)
 	select {
-	case <-done:
+	case err := <-done:
+		_ = err
 		return
 	case <-time.After(5 * time.Second):
 		_ = cmd.Process.Kill()
-		<-done
+		waitErr := <-done
+		var exitErr *exec.ExitError
+		if waitErr != nil && !errors.As(waitErr, &exitErr) {
+			log.Warn().Err(waitErr).Msg("failed to wait for stopped provider")
+		}
 	}
 }
