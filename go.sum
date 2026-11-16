@@ -131,8 +131,8 @@ github.com/horchestra/pack v0.7.0 h1:kLkMQNjSCM1+HZc5TPwlFd0QZO7FaMV28j0Lif13GEo
 github.com/horchestra/pack v0.7.0/go.mod h1:NEO9/Aah796m+Eahb6O+y0DJC8p1tu6Nlu/03UqEPNY=
 github.com/horchestra/pack/sdk v1.2.0 h1:1ERZjjnpkACN14LzdfLcH0suXVfZz8KZKKE+NhidQr0=
 github.com/horchestra/pack/sdk v1.2.0/go.mod h1:aAG+C2kEc1rGLUfR7jRBKt1R5QFi5W3D4nt/FuesovY=
-github.com/horchestra/targets/host v0.4.3 h1:YdGcsP+UXGL6RHQCy+zKMwvG/DmyGh8NfSaPwaGDoJg=
-github.com/horchestra/targets/host v0.4.3/go.mod h1:f5lNE5lguuBxsfsybp/nPuV7G6OcICJh1T804UjRqKM=
+github.com/horchestra/targets/host v0.4.4 h1:xhgY6NX97o2TPFycZyOaw0NKQFg4Su84pB/8pbqAzUQ=
+github.com/horchestra/targets/host v0.4.4/go.mod h1:+LyJ9qr6A3bXbxs9dR4xT+iQydvstOvWK+JvyGClwuo=
 github.com/huandu/xstrings v1.6.3 h1:7997PcI0mYC9uPNBJ7udg/KrdJh1GhJid8f2tzKFHYQ=
 github.com/huandu/xstrings v1.6.3/go.mod h1:y5/lhBue+AyNmUVz9RLU9xbLR0o4KIIExikq4ovT0aE=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=

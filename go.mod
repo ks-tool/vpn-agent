@@ -8,7 +8,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/horchestra/pack v0.7.0
 	github.com/horchestra/pack/sdk v1.2.0
-	github.com/horchestra/targets/host v0.4.3
+	github.com/horchestra/targets/host v0.4.4
 	github.com/ks-tool/app-config/go v1.0.0
 	github.com/natefinch/atomic v1.0.1
 	github.com/rs/zerolog v1.35.1
