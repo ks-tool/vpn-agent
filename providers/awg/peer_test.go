@@ -37,7 +37,7 @@ func TestPeerLifecycleActionsAndSecretHandling(t *testing.T) {
 		t.Fatal(err)
 	}
 	interfaceKey := mustPeerKey(t)
-	legacy := awgmodels.InterfaceConfig{Interface: "awg0", Address: "10.0.0.1/24", ListenPort: 51820, PrivateKey: interfaceKey}
+	legacy := awgmodels.InterfaceConfig{Interface: "awg0", Address: "10.0.0.1/24", ListenPort: 51820, MTU: 1280, PrivateKey: interfaceKey}
 	if err := store.Set(&legacy); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestPeerLifecycleActionsAndSecretHandling(t *testing.T) {
 	}
 	runtime.Start(context.Background())
 	defer runtime.Close()
-	if _, err := runtime.Put("awg", "Interface", "office", models.Resource{APIVersion: APIVersion, Spec: json.RawMessage(`{"iface":"awg0","listen":51820,"addr":"10.0.0.1/24"}`)}); err != nil {
+	if _, err := runtime.Put("awg", "Interface", "office", models.Resource{APIVersion: APIVersion, Spec: json.RawMessage(`{"iface":"awg0","listen":51820,"addr":"10.0.0.1/24","mtu":1280}`)}); err != nil {
 		t.Fatal(err)
 	}
 	waitForProviderStatus(t, runtime, models.ResourceReady)
@@ -97,7 +97,7 @@ func TestPeerLifecycleActionsAndSecretHandling(t *testing.T) {
 	if err := json.Unmarshal(result.Data, &config); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(config, "[Interface]") || !strings.Contains(config, "Endpoint = 192.0.2.1:51820") || !strings.Contains(config, publicKeyString(interfaceKey)) {
+	if !strings.Contains(config, "[Interface]") || !strings.Contains(config, "MTU = 1280") || !strings.Contains(config, "Endpoint = 192.0.2.1:51820") || !strings.Contains(config, publicKeyString(interfaceKey)) {
 		t.Fatalf("unexpected client config: %s", config)
 	}
 
@@ -212,6 +212,9 @@ func TestPeerSecretMigration(t *testing.T) {
 	}
 	if !strings.Contains(config, "PresharedKey = "+presharedKey.String()) {
 		t.Fatal("imported preshared key was not used for client config")
+	}
+	if strings.Contains(config, "MTU =") {
+		t.Fatalf("unset interface MTU leaked into client config: %s", config)
 	}
 }
 
