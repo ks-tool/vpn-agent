@@ -344,6 +344,9 @@ func (p *Provider) renderClientConfig(item models.Resource, rawArguments json.Ra
 	if len(dns) > 0 {
 		fmt.Fprintf(&config, "DNS = %s\n", strings.Join(dns, ", "))
 	}
+	if iface.MTU > 0 {
+		fmt.Fprintf(&config, "MTU = %d\n", iface.MTU)
+	}
 	fmt.Fprintf(&config, "\n[Peer]\nPublicKey = %s\n", publicKeyString(iface.PrivateKey))
 	if peer.PresharedKey != nil {
 		fmt.Fprintf(&config, "PresharedKey = %s\n", peer.PresharedKey.String())
