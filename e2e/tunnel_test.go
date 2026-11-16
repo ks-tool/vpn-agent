@@ -35,7 +35,7 @@ import (
 	adminservice "github.com/ks-tool/vpn-admin/internal/service"
 	adminmodels "github.com/ks-tool/vpn-admin/models"
 	"github.com/ks-tool/vpn-admin/storage/boltdb"
-	agentmodels "github.com/ks-tool/vpn-agent/v2/models"
+	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
@@ -234,8 +234,8 @@ func addAdminServer(t *testing.T, admin *adminservice.Service, name string, node
 
 func createAdminInterface(t *testing.T, admin *adminservice.Service, server *adminmodels.Server, name, address string, listenPort uint16) *adminmodels.Interface {
 	t.Helper()
-	cfg := agentmodels.InterfaceConfig{Interface: name, Address: address, ListenPort: listenPort}
-	agentmodels.GenerateAmneziaParams(&cfg)
+	cfg := awgmodels.InterfaceConfig{Interface: name, Address: address, ListenPort: listenPort}
+	awgmodels.GenerateAmneziaParams(&cfg)
 	iface, err := admin.CreateInterface(server.ID.String(), cfg)
 	if err != nil {
 		t.Fatalf("create interface %s on %s through admin: %v", name, server.Name, err)
@@ -282,13 +282,13 @@ func dumpLiveInterfaces(t *testing.T, node agentNode) {
 		return
 	}
 	defer func() { _ = response.Body.Close() }()
-	var configs []agentmodels.InterfaceConfig
+	var configs []awgmodels.InterfaceConfig
 	if err := json.NewDecoder(response.Body).Decode(&configs); err != nil {
 		t.Logf("decode live interfaces: %v", err)
 		return
 	}
 	for index := range configs {
-		configs[index].PrivateKey = agentmodels.Key{}
+		configs[index].PrivateKey = awgmodels.Key{}
 	}
 	data, err := json.Marshal(configs)
 	if err != nil {

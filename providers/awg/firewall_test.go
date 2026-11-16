@@ -138,6 +138,7 @@ func TestFirewalldRulesAreRuntimeAndPermanent(t *testing.T) {
 		"firewall-cmd --permanent --zone=trusted --add-forward",
 		"firewall-cmd --permanent --add-port=51820/udp",
 		"firewall-cmd --permanent --direct --add-rule ipv4 nat POSTROUTING 0 -o awg0 -j MASQUERADE",
+		"firewall-cmd --direct --add-rule ipv4 filter FORWARD 0 -o awg0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT",
 		"firewall-cmd --direct --add-rule ipv4 mangle PREROUTING 0 -i awg0 -j MARK --set-mark 0x1234",
 		"firewall-cmd --permanent --direct --add-rule ipv4 nat POSTROUTING 0 ! -o awg0 -m mark --mark 0x1234 -j MASQUERADE",
 	} {
@@ -164,7 +165,7 @@ func TestUFWFiltersAndPersistentNetfilterRules(t *testing.T) {
 			t.Errorf("missing command %q in:\n%s", expected, commands)
 		}
 	}
-	for _, expected := range []string{"*nat", "*mangle", "# vpn-admin:transit-awg0", "# vpn-admin:exit-awg0", "-A POSTROUTING -o awg0 -j MASQUERADE", "-A PREROUTING -i awg0 -j MARK --set-mark 0x1234"} {
+	for _, expected := range []string{"*nat", "*mangle", "# vpn-admin:transit-awg0", "# vpn-admin:exit-awg0", "# vpn-admin:exit-forward-awg0", "-A POSTROUTING -o awg0 -j MASQUERADE", "-A PREROUTING -i awg0 -j MARK --set-mark 0x1234", "-A FORWARD -o awg0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"} {
 		if !strings.Contains(system.content, expected) {
 			t.Errorf("missing persistent rule %q in:\n%s", expected, system.content)
 		}
@@ -175,7 +176,7 @@ func TestUFWFiltersAndPersistentNetfilterRules(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if strings.Contains(system.content, "# vpn-admin:") || strings.Contains(system.content, "MASQUERADE") || strings.Contains(system.content, "--set-mark") {
+	if strings.Contains(system.content, "# vpn-admin:") || strings.Contains(system.content, "MASQUERADE") || strings.Contains(system.content, "--set-mark") || strings.Contains(system.content, "--ctstate") {
 		t.Fatalf("owned rules survived removal:\n%s", system.content)
 	}
 	if !strings.HasPrefix(system.content, "*filter\nCOMMIT\n") {
@@ -204,6 +205,17 @@ func TestUFWRuleUpdateIsIdempotentAndPreservesForeignRule(t *testing.T) {
 	if owned || changed || updated != foreign {
 		t.Fatal("foreign rule was removed")
 	}
+}
+
+func TestExitRulesAllowEstablishedReturnTraffic(t *testing.T) {
+	rules := firewallNetfilterRules(firewallRequest{kind: "exit", iface: "awg0", mark: "0x1234"})
+	want := "-o awg0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+	for _, rule := range rules {
+		if rule.table == "filter" && rule.chain == "FORWARD" && strings.Join(rule.args, " ") == want {
+			return
+		}
+	}
+	t.Fatalf("established return traffic is not allowed: %+v", rules)
 }
 
 func TestInterfaceRulesAllowZeroListenPort(t *testing.T) {

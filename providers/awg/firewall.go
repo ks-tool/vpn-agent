@@ -192,6 +192,7 @@ func firewallNetfilterRules(request firewallRequest) []netfilterRule {
 		return []netfilterRule{{id: "transit-" + request.iface, table: "nat", chain: "POSTROUTING", args: []string{"-o", request.iface, "-j", "MASQUERADE"}}}
 	case "exit":
 		return []netfilterRule{
+			{id: "exit-forward-" + request.iface, table: "filter", chain: "FORWARD", args: []string{"-o", request.iface, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"}},
 			{id: "exit-" + request.iface, table: "mangle", chain: "PREROUTING", args: []string{"-i", request.iface, "-j", "MARK", "--set-mark", request.mark}},
 			{id: "exit-" + request.iface, table: "nat", chain: "POSTROUTING", args: []string{"!", "-o", request.iface, "-m", "mark", "--mark", request.mark, "-j", "MASQUERADE"}},
 		}
