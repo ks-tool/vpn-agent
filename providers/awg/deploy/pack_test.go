@@ -100,8 +100,18 @@ func TestPackOwnsDependenciesAndRegistration(t *testing.T) {
 	}
 	registry := values["registry"].(map[string]any)
 	provider := registry["providers"].([]any)[0].(map[string]any)
-	if provider["command"] != "/usr/local/bin/vpn-provider-awg" || provider["address"] != "http://127.0.0.1:9091" {
+	if provider["command"] != "/usr/local/bin/vpn-provider-awg" {
 		t.Fatalf("unexpected registration: %#v", provider)
+	}
+	if _, exists := provider["address"]; exists {
+		t.Fatalf("registration publishes a provider address: %#v", provider)
+	}
+	env := provider["env"].(map[string]any)
+	if _, exists := env["VPN_PROVIDER_AWG_ADDR"]; exists {
+		t.Fatalf("registration publishes a listen address: %#v", env)
+	}
+	if len(pack.PackRoot().Ports) != 0 || pack.PackRoot().Readiness != nil {
+		t.Fatalf("provider still publishes a port or HTTP readiness check: %#v", pack.PackRoot())
 	}
 	if _, forced := provider["args"]; forced {
 		t.Fatalf("AWG must select its backend automatically: %#v", provider)

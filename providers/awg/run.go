@@ -21,7 +21,6 @@ package awg
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,11 +29,8 @@ import (
 
 	awgstorage "github.com/ks-tool/vpn-agent/v2/providers/awg/storage"
 
-	"github.com/ks-tool/vpn-agent/v2/internal/agent"
 	agentconfig "github.com/ks-tool/vpn-agent/v2/internal/config"
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
-	"github.com/ks-tool/vpn-agent/v2/mux/middleware"
-	"github.com/ks-tool/vpn-agent/v2/providers/awg/api"
 	providerdeploy "github.com/ks-tool/vpn-agent/v2/providers/awg/deploy"
 	"github.com/ks-tool/vpn-agent/v2/providers/awg/kernel"
 	"github.com/ks-tool/vpn-agent/v2/providers/awg/metrics"
@@ -50,13 +46,9 @@ import (
 
 type config struct {
 	LogLevel  zerolog.Level `env:"LOG_LEVEL" envDefault:"info" flag:"log-level" help:"logging level"`
-	Addr      string        `env:"ADDR" envDefault:"127.0.0.1:9091" flag:"addr" help:"HTTP listen address"`
+	AgentAddr string        `env:"AGENT_ADDR" flag:"agent-addr" help:"agent provider control address"`
 	DB        string        `env:"DB" flag:"db" help:"provider state directory"`
 	Userspace bool          `env:"USERSPACE" flag:"userspace" help:"force the amneziawg-go userspace backend"`
-
-	TLSCert     string `env:"TLS_CERT" flag:"tls-cert" help:"TLS certificate file"`
-	TLSKey      string `env:"TLS_KEY" flag:"tls-key" help:"TLS private key file"`
-	TLSClientCA string `env:"TLS_CLIENT_CA" flag:"tls-client-ca" help:"client CA certificate file"`
 
 	MetricsInterval time.Duration `env:"METRICS_INTERVAL" envDefault:"45s" flag:"metrics-interval" help:"metrics sampling interval"`
 }
@@ -159,17 +151,9 @@ func Run(version string) {
 		close(metricsDone)
 	}()
 
-	hostInfo := agent.GatherHostInfo(version)
-	hostInfo.Backend = backend.Kind
-	hostInfo.KernelModule = backend.KernelModule
-	hostInfo.InterfaceKinds = backend.InterfaceKinds
-	log.Info().Msgf("Starting server on %s", cfg.Addr)
+	log.Info().Msg("starting AWG provider control connection")
 	if err := proxy.Serve(proxy.ServeOptions{
-		Addr: cfg.Addr, TLSCert: cfg.TLSCert, TLSKey: cfg.TLSKey, TLSClientCA: cfg.TLSClientCA,
-		Store: resourceStore, Provider: awgProvider, Start: awgProvider.RestoreLinks,
-		Handler: func(runtime *resource.Runtime) http.Handler {
-			return api.NewWithResources(hostInfo, store, collector, latency, runtime, middleware.RequestID, middleware.Logging)
-		},
+		Address: cfg.AgentAddr, Store: resourceStore, Provider: awgProvider, Start: awgProvider.RestoreLinks,
 		Close: func() error {
 			stopMetrics()
 			select {
@@ -177,12 +161,10 @@ func Run(version string) {
 			case <-time.After(5 * time.Second):
 				log.Warn().Msg("timed out waiting for metrics history to flush")
 			}
-			log.Info().Msg("stopping active interfaces")
-			service.NewHandler(store, metricsAwg).StopEnabled()
 			return awgProvider.connectors.Close()
 		},
 	}); err != nil {
-		log.Fatal().Err(err).Msg("provider API failed")
+		log.Fatal().Err(err).Msg("provider control connection failed")
 	}
 }
 

@@ -33,7 +33,7 @@ func (Adapter) Deploy(ctx context.Context, options map[string]any) (proxy.Deploy
 	if err := proxy.DownloadArtifact(ctx, artifact, checksum, corePath, ""); err != nil {
 		return proxy.Deployment{}, err
 	}
-	return proxy.Deployment{Port: 9093, CorePath: corePath, EnvPrefix: "VPN_PROVIDER_HYSTERIA2", Packages: []string{"iptables", "procps"}}, nil
+	return proxy.Deployment{CorePath: corePath, EnvPrefix: "VPN_PROVIDER_HYSTERIA2", Packages: []string{"iptables", "procps"}}, nil
 }
 
 func coreRelease(options map[string]any) (string, string, error) {

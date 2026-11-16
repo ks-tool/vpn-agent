@@ -20,14 +20,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
-	"time"
 
-	"github.com/ks-tool/vpn-agent/v2/internal/resource"
 	"github.com/ks-tool/vpn-agent/v2/models"
 )
 
@@ -80,82 +75,4 @@ func Registrations(path string) ([]models.ProviderRegistration, error) {
 		return nil, errors.New("unsupported provider registry protocol version")
 	}
 	return config.Providers, nil
-}
-
-func LoadDir(dir, legacyFile string, client *http.Client) ([]resource.Provider, error) {
-	registrations, err := RegistrationsDir(dir, legacyFile)
-	if err != nil {
-		return nil, err
-	}
-	return loadRegistrations(registrations, client)
-}
-
-func Load(path string, client *http.Client) ([]resource.Provider, error) {
-	registrations, err := Registrations(path)
-	if err != nil {
-		return nil, err
-	}
-	return loadRegistrations(registrations, client)
-}
-
-func loadRegistrations(registrations []models.ProviderRegistration, client *http.Client) ([]resource.Provider, error) {
-	providers := make([]resource.Provider, 0, len(registrations))
-	for _, registration := range registrations {
-		definition := registration.Provider
-		var err error
-		if registration.Discover {
-			definition, err = discover(registration.Address, definition.Name, client)
-			if err != nil {
-				return nil, err
-			}
-		}
-		provider, err := NewProvider(registration.Address, definition, client)
-		if err != nil {
-			return nil, err
-		}
-		providers = append(providers, provider)
-	}
-	return providers, nil
-}
-
-func discover(address, name string, client *http.Client) (models.ProviderDefinition, error) {
-	var last error
-	for attempt := range 25 {
-		definition, err := discoverOnce(address, name, client)
-		if err == nil {
-			return definition, nil
-		}
-		last = err
-		if attempt < 24 {
-			time.Sleep(200 * time.Millisecond)
-		}
-	}
-	return models.ProviderDefinition{}, last
-}
-
-func discoverOnce(address, name string, client *http.Client) (models.ProviderDefinition, error) {
-	if client == nil {
-		client = &http.Client{Timeout: 3 * time.Second}
-	}
-	response, err := client.Get(strings.TrimSuffix(address, "/") + "/v1/manifest")
-	if err != nil {
-		return models.ProviderDefinition{}, fmt.Errorf("discover remote provider %s: %w", name, err)
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != http.StatusOK {
-		return models.ProviderDefinition{}, fmt.Errorf("discover remote provider %s: %s", name, response.Status)
-	}
-	var manifest models.Manifest
-	if err := json.NewDecoder(response.Body).Decode(&manifest); err != nil {
-		return models.ProviderDefinition{}, err
-	}
-	if manifest.ProtocolVersion != models.ProtocolVersion {
-		return models.ProviderDefinition{}, errors.New("unsupported remote provider protocol version")
-	}
-	for _, definition := range manifest.Providers {
-		if definition.Name == name {
-			return definition, nil
-		}
-	}
-	return models.ProviderDefinition{}, fmt.Errorf("remote provider manifest does not contain %s", name)
 }

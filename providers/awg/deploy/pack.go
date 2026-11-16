@@ -98,10 +98,8 @@ func (c *Config) PackRoot() packschema.Root {
 		})
 	}
 	return packschema.Root{
-		Ports:     map[string]int{"provider": 9091},
-		Data:      map[string]packschema.Volume{"state": {MountPath: "/var/lib/vpn-provider-awg", Size: "100Mi"}},
-		Readiness: &packschema.Readiness{HTTP: "provider/v1/manifest"},
-		Packages:  map[string]packschema.OSInstall{"debian": debian, "fedora": fedora},
+		Data:     map[string]packschema.Volume{"state": {MountPath: "/var/lib/vpn-provider-awg", Size: "100Mi"}},
+		Packages: map[string]packschema.OSInstall{"debian": debian, "fedora": fedora},
 	}
 }
 
@@ -121,11 +119,9 @@ func New(provider models.ProviderDeployment, agentDB string) (sdk.Pack, map[stri
 		userspace = enabled
 	}
 	registration := map[string]any{
-		"address": "http://127.0.0.1:9091", "discover": true,
 		"command": "/usr/local/bin/vpn-provider-awg",
 		"env": map[string]any{
-			"VPN_PROVIDER_AWG_DB":   "/var/lib/vpn-provider-awg",
-			"VPN_PROVIDER_AWG_ADDR": "127.0.0.1:9091",
+			"VPN_PROVIDER_AWG_DB": "/var/lib/vpn-provider-awg",
 		},
 		"provider": map[string]any{"name": "awg"},
 	}

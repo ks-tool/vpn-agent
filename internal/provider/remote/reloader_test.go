@@ -19,8 +19,6 @@ package remote
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -58,7 +56,8 @@ func (r *reloaderRuntime) SetProviderError(name string, err error) {
 	}
 	r.errors[name] = err.Error()
 }
-func (r *reloaderRuntime) Resync() { r.resyncs++ }
+func (r *reloaderRuntime) Resync()                                   { r.resyncs++ }
+func (r *reloaderRuntime) UpdateProviderStatus(resource.Event) error { return nil }
 
 func TestReloaderAddsUpdatesAndRemovesProviders(t *testing.T) {
 	dir := t.TempDir()
@@ -67,8 +66,8 @@ func TestReloaderAddsUpdatesAndRemovesProviders(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacyFile := filepath.Join(dir, "providers.conf")
-	first := models.ProviderRegistration{Address: "http://127.0.0.1:9091", Provider: models.ProviderDefinition{Name: "awg", Version: "1"}}
-	second := models.ProviderRegistration{Address: "http://127.0.0.1:9092", Provider: models.ProviderDefinition{Name: "xray", Version: "1"}}
+	first := models.ProviderRegistration{Provider: models.ProviderDefinition{Name: "awg", Version: "1"}}
+	second := models.ProviderRegistration{Provider: models.ProviderDefinition{Name: "xray", Version: "1"}}
 	writeRegistrations := func(registrations ...models.ProviderRegistration) {
 		t.Helper()
 		data, err := json.Marshal(Config{ProtocolVersion: models.ProtocolVersion, Providers: registrations})
@@ -86,14 +85,11 @@ func TestReloaderAddsUpdatesAndRemovesProviders(t *testing.T) {
 	}
 	defer supervisor.Close()
 	runtime := &reloaderRuntime{providers: make(map[string]resource.Provider)}
-	reloader := NewReloader(providerDir, legacyFile, supervisor, runtime, []models.ProviderRegistration{first})
-	providers, err := loadRegistrations([]models.ProviderRegistration{first}, nil)
-	if err != nil {
+	registry := NewRegistry(runtime)
+	if err := registry.Reload([]models.ProviderRegistration{first}); err != nil {
 		t.Fatal(err)
 	}
-	if err := runtime.Register(providers[0]); err != nil {
-		t.Fatal(err)
-	}
+	reloader := NewReloader(providerDir, legacyFile, supervisor, runtime, registry, []models.ProviderRegistration{first})
 
 	writeRegistrations(first, second)
 	if err := reloader.Reload(); err != nil {
@@ -108,8 +104,8 @@ func TestReloaderAddsUpdatesAndRemovesProviders(t *testing.T) {
 	if err := reloader.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	if runtime.providers["xray"].Version() != "2" {
-		t.Fatalf("provider was not updated: %+v", runtime.Manifest().Providers)
+	if reloader.registrations["xray"].Provider.Version != "2" {
+		t.Fatalf("registration was not updated: %+v", reloader.registrations["xray"])
 	}
 	writeRegistrations(updated)
 	if err := reloader.Reload(); err != nil {
@@ -120,25 +116,10 @@ func TestReloaderAddsUpdatesAndRemovesProviders(t *testing.T) {
 	}
 }
 
-func TestReloaderDiscoversAddedProvider(t *testing.T) {
-	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/manifest" {
-			http.NotFound(w, r)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(models.Manifest{
-			ProtocolVersion: models.ProtocolVersion,
-			Providers: []models.ProviderDefinition{{
-				Name: "awg", Version: "1",
-				Resources: []models.ResourceDefinition{{APIVersion: "awg.ks-tool.dev/v1", Kind: "Interface"}},
-			}},
-		})
-	}))
-	defer providerServer.Close()
-
+func TestReloaderRegistersProviderBeforeProcessConnects(t *testing.T) {
 	dir := t.TempDir()
 	registration := models.ProviderRegistration{
-		Address: providerServer.URL, Discover: true,
+		Command:  filepath.Join(dir, "provider"),
 		Provider: models.ProviderDefinition{Name: "awg"},
 	}
 	data, err := json.Marshal(Config{ProtocolVersion: models.ProtocolVersion, Providers: []models.ProviderRegistration{registration}})
@@ -154,37 +135,13 @@ func TestReloaderDiscoversAddedProvider(t *testing.T) {
 	}
 	defer supervisor.Close()
 	runtime := &reloaderRuntime{providers: make(map[string]resource.Provider)}
-	reloader := NewReloader(dir, filepath.Join(t.TempDir(), "providers.conf"), supervisor, runtime, nil)
+	registry := NewRegistry(runtime)
+	reloader := NewReloader(dir, filepath.Join(t.TempDir(), "providers.conf"), supervisor, runtime, registry, nil)
 	if err := reloader.Reload(); err != nil {
 		t.Fatal(err)
 	}
 	manifest := runtime.Manifest()
-	if len(manifest.Providers) != 1 || len(manifest.Providers[0].Resources) != 1 {
-		t.Fatalf("discovered provider is missing from manifest: %+v", manifest.Providers)
-	}
-}
-
-func TestReloaderReportsProviderLoadError(t *testing.T) {
-	dir := t.TempDir()
-	registration := models.ProviderRegistration{Address: "invalid", Provider: models.ProviderDefinition{Name: "awg", Version: "1"}}
-	data, err := json.Marshal(Config{ProtocolVersion: models.ProtocolVersion, Providers: []models.ProviderRegistration{registration}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "awg.conf"), data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	supervisor := NewSupervisor(nil)
-	if err := supervisor.Start(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	defer supervisor.Close()
-	runtime := &reloaderRuntime{providers: make(map[string]resource.Provider)}
-	reloader := NewReloader(dir, filepath.Join(t.TempDir(), "providers.conf"), supervisor, runtime, nil)
-	if err := reloader.Reload(); err == nil {
-		t.Fatal("invalid registration returned no error")
-	}
-	if len(runtime.Manifest().ProviderErrors["awg"]) == 0 {
-		t.Fatal("provider load error is missing from manifest")
+	if len(manifest.Providers) != 1 || manifest.Providers[0].Name != "awg" {
+		t.Fatalf("pending provider is missing from manifest: %+v", manifest.Providers)
 	}
 }

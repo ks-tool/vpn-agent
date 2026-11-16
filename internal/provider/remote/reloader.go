@@ -17,7 +17,6 @@
 package remote
 
 import (
-	"fmt"
 	"reflect"
 
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
@@ -30,6 +29,7 @@ type ProviderRuntime interface {
 	Unregister(string)
 	SetProviderError(string, error)
 	Resync()
+	UpdateProviderStatus(resource.Event) error
 }
 
 type Reloader struct {
@@ -37,11 +37,12 @@ type Reloader struct {
 	legacyFile    string
 	supervisor    *Supervisor
 	runtime       ProviderRuntime
+	registry      *Registry
 	registrations map[string]models.ProviderRegistration
 }
 
-func NewReloader(dir, legacyFile string, supervisor *Supervisor, runtime ProviderRuntime, registrations []models.ProviderRegistration) *Reloader {
-	return &Reloader{dir: dir, legacyFile: legacyFile, supervisor: supervisor, runtime: runtime, registrations: registrationMap(registrations)}
+func NewReloader(dir, legacyFile string, supervisor *Supervisor, runtime ProviderRuntime, registry *Registry, registrations []models.ProviderRegistration) *Reloader {
+	return &Reloader{dir: dir, legacyFile: legacyFile, supervisor: supervisor, runtime: runtime, registry: registry, registrations: registrationMap(registrations)}
 }
 
 func (r *Reloader) Reload() error {
@@ -50,51 +51,18 @@ func (r *Reloader) Reload() error {
 		return err
 	}
 	desired := registrationMap(registrations)
-	if reflect.DeepEqual(r.registrations, desired) {
-		return nil
-	}
-	if err := r.supervisor.Reload(registrations); err != nil {
-		return err
-	}
-	current := make(map[string]struct{})
-	for _, provider := range r.runtime.Manifest().Providers {
-		current[provider.Name] = struct{}{}
-		if _, exists := desired[provider.Name]; !exists {
-			r.runtime.Unregister(provider.Name)
-			delete(current, provider.Name)
-		}
-	}
-	for name, registration := range desired {
-		previous, existed := r.registrations[name]
-		_, registered := current[name]
-		if registered && existed && reflect.DeepEqual(previous, registration) {
-			continue
-		}
-		if registered {
-			r.runtime.Unregister(name)
-		}
-		providers, err := loadRegistrations([]models.ProviderRegistration{registration}, nil)
-		if err != nil {
-			if processErr := r.supervisor.ProviderError(name); processErr != nil {
-				err = fmt.Errorf("%v; %w", processErr, err)
-			}
-			err = fmt.Errorf("reload provider %s: %w", name, err)
-			r.runtime.SetProviderError(name, err)
+	if !reflect.DeepEqual(r.registrations, desired) {
+		if err := r.supervisor.Reload(registrations); err != nil {
 			return err
 		}
-		if len(providers) != 1 {
-			err := fmt.Errorf("reload provider %s: invalid registration", name)
-			r.runtime.SetProviderError(name, err)
+		if err := r.registry.Reload(registrations); err != nil {
 			return err
 		}
-		if err := r.runtime.Register(providers[0]); err != nil {
-			err = fmt.Errorf("reload provider %s: %w", name, err)
-			r.runtime.SetProviderError(name, err)
-			return err
-		}
+		r.registrations = desired
 	}
-	r.registrations = desired
-	r.runtime.Resync()
+	for name := range desired {
+		r.runtime.SetProviderError(name, r.supervisor.ProviderError(name))
+	}
 	return nil
 }
 

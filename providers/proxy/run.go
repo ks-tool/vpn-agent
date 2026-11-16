@@ -5,7 +5,7 @@
   you may not use this file except in compliance with the License.
   You may obtain a copy of the License at
 
-  	http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
   Unless required by applicable law or agreed to in writing, software
   distributed under the License is distributed on an "AS IS" BASIS,
@@ -30,13 +30,10 @@ import (
 )
 
 type Config struct {
-	LogLevel    zerolog.Level `env:"LOG_LEVEL" envDefault:"info" flag:"log-level" help:"logging level"`
-	Addr        string        `env:"ADDR" envDefault:"127.0.0.1:9092" flag:"addr" help:"HTTP listen address"`
-	DB          string        `env:"DB" flag:"db" help:"provider state directory"`
-	Core        string        `env:"CORE" flag:"core" help:"core binary path"`
-	TLSCert     string        `env:"TLS_CERT" flag:"tls-cert" help:"TLS certificate file"`
-	TLSKey      string        `env:"TLS_KEY" flag:"tls-key" help:"TLS private key file"`
-	TLSClientCA string        `env:"TLS_CLIENT_CA" flag:"tls-client-ca" help:"client CA certificate file"`
+	LogLevel  zerolog.Level `env:"LOG_LEVEL" envDefault:"info" flag:"log-level" help:"logging level"`
+	AgentAddr string        `env:"AGENT_ADDR" flag:"agent-addr" help:"agent provider control address"`
+	DB        string        `env:"DB" flag:"db" help:"provider state directory"`
+	Core      string        `env:"CORE" flag:"core" help:"core binary path"`
 }
 
 func Run(adapter Adapter, version, prefix, defaultCore string) {
@@ -50,7 +47,7 @@ func Run(adapter Adapter, version, prefix, defaultCore string) {
 		}
 		return
 	}
-	cfg := Config{Addr: "127.0.0.1:9092", Core: defaultCore}
+	cfg := Config{Core: defaultCore}
 	if err := agentconfig.Load(&cfg, prefix+"_", os.Args[1:]); err != nil {
 		log.Fatal().Err(err).Msg("failed to load configuration")
 	}
@@ -70,12 +67,11 @@ func Run(adapter Adapter, version, prefix, defaultCore string) {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to initialize provider")
 	}
-	log.Info().Str("provider", adapter.Name()).Str("version", version).Str("addr", cfg.Addr).Msg("starting provider API")
+	log.Info().Str("provider", adapter.Name()).Str("version", version).Msg("starting provider")
 	if err := Serve(ServeOptions{
-		Addr: cfg.Addr, TLSCert: cfg.TLSCert, TLSKey: cfg.TLSKey, TLSClientCA: cfg.TLSClientCA,
-		Store: resourceStore, Provider: provider, Start: provider.RestoreLinks, Close: provider.Close,
+		Address: cfg.AgentAddr, Store: resourceStore, Provider: provider, Start: provider.RestoreLinks, Close: provider.Close,
 	}); err != nil {
-		log.Fatal().Err(err).Msg("provider API failed")
+		log.Fatal().Err(err).Msg("provider control connection failed")
 	}
 }
 

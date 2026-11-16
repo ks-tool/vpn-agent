@@ -17,12 +17,7 @@
 package api
 
 import (
-	"bytes"
-	"encoding/json"
-	"io"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 
 	"github.com/ks-tool/vpn-agent/v2/internal/metrics"
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
@@ -35,31 +30,18 @@ type metricsStateRequest struct {
 }
 
 type agentHandler struct {
-	system      *metrics.Collector
-	proxy       http.Handler
-	providerURL string
-	client      *http.Client
+	system *metrics.Collector
 }
 
-func NewAgent(hostInfo models.HostInfo, runtime *resource.Runtime, legacyProxy string, system *metrics.Collector, mws ...mux.Middleware) (http.Handler, error) {
-	h := &agentHandler{system: system, providerURL: legacyProxy, client: &http.Client{}}
+func NewAgent(hostInfo models.HostInfo, runtime *resource.Runtime, system *metrics.Collector, mws ...mux.Middleware) (http.Handler, error) {
+	h := &agentHandler{system: system}
 	router := mux.NewServeMux()
 	router.Handle("/v1/", NewResourceHandler(runtime, mws...))
 	router.GET("/info", func(w http.ResponseWriter, _ *http.Request) { encode(w, hostInfo) })
 	router.GET("/metrics", h.systemMetrics)
 	router.GET("/metrics/history", h.systemMetricsHistory)
 	router.PATCH("/metrics", h.setMetricsState)
-	if len(legacyProxy) > 0 {
-		target, err := url.Parse(legacyProxy)
-		if err != nil {
-			return nil, err
-		}
-		h.proxy = httputil.NewSingleHostReverseProxy(target)
-		router.Handle("/metrics/", h.proxy)
-		router.Handle("/", h.proxy)
-	} else {
-		router.HandleFunc("/", http.NotFound)
-	}
+	router.HandleFunc("/", http.NotFound)
 	return router, nil
 }
 
@@ -94,23 +76,5 @@ func (h *agentHandler) setMetricsState(w http.ResponseWriter, r *http.Request) {
 	if h.system != nil {
 		h.system.SetEnabled(state.Enabled)
 	}
-	if len(h.providerURL) == 0 {
-		encode(w, state)
-		return
-	}
-	body, _ := json.Marshal(state)
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPatch, h.providerURL+"/metrics", bytes.NewReader(body))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := h.client.Do(req)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	encode(w, state)
 }

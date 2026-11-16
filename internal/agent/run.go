@@ -49,7 +49,6 @@ type config struct {
 	TLSKey      string `env:"TLS_KEY" flag:"tls-key" help:"TLS private key file"`
 	TLSClientCA string `env:"TLS_CLIENT_CA" flag:"tls-client-ca" help:"client CA certificate file"`
 
-	LegacyProxy     string        `env:"LEGACY_PROXY" flag:"legacy-proxy" help:"optional AWG provider URL for the legacy interface and interface metrics API"`
 	MetricsInterval time.Duration `env:"METRICS_INTERVAL" envDefault:"45s" flag:"metrics-interval" help:"system metrics and latency sampling interval"`
 }
 
@@ -84,25 +83,22 @@ func Run(version string) {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to read provider registry")
 	}
-	supervisor := providerremote.NewSupervisor(registrations)
+	resourceRuntime.Start(context.Background())
+	providerRegistry := providerremote.NewRegistry(resourceRuntime)
+	if err := providerRegistry.Reload(registrations); err != nil {
+		log.Fatal().Err(err).Msg("failed to register providers")
+	}
+	providerSocket := filepath.Join(cfg.DB, "providers.sock")
+	if err := providerRegistry.Start(providerSocket); err != nil {
+		log.Fatal().Err(err).Msg("failed to start provider control server")
+	}
+	defer providerRegistry.Close()
+	supervisor := providerremote.NewSupervisor(registrations, "unix://"+providerSocket)
 	if err := supervisor.Start(context.Background()); err != nil {
 		log.Fatal().Err(err).Msg("failed to start providers")
 	}
 	defer supervisor.Close()
-
-	remoteProviders, err := providerremote.LoadDir(providerDir, providerConfig, nil)
-	if err != nil {
-		supervisor.Close()
-		log.Fatal().Err(err).Msg("failed to load external providers")
-	}
-	for _, provider := range remoteProviders {
-		if err := resourceRuntime.Register(provider); err != nil {
-			supervisor.Close()
-			log.Fatal().Err(err).Msg("failed to register external provider")
-		}
-	}
-	resourceRuntime.Start(context.Background())
-	providerReloader := providerremote.NewReloader(providerDir, providerConfig, supervisor, resourceRuntime, registrations)
+	providerReloader := providerremote.NewReloader(providerDir, providerConfig, supervisor, resourceRuntime, providerRegistry, registrations)
 	providerWatchCtx, stopProviderWatch := context.WithCancel(context.Background())
 	providerWatchDone := make(chan struct{})
 	defer func() {
@@ -140,9 +136,9 @@ func Run(version string) {
 	}()
 
 	hostInfo := GatherHostInfo(version)
-	handler, err := api.NewAgent(hostInfo, resourceRuntime, cfg.LegacyProxy, systemMetrics, middleware.RequestID, middleware.Logging)
+	handler, err := api.NewAgent(hostInfo, resourceRuntime, systemMetrics, middleware.RequestID, middleware.Logging)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to configure legacy provider proxy")
+		log.Fatal().Err(err).Msg("failed to configure agent API")
 	}
 	srv := &http.Server{Addr: cfg.Addr, Handler: handler}
 	srv.TLSConfig, err = agentconfig.TLS(cfg.TLSCert, cfg.TLSKey, cfg.TLSClientCA)

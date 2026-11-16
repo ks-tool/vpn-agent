@@ -120,7 +120,7 @@ func TestSupervisorReloadRestartsOnlyChangedProvider(t *testing.T) {
 		}
 	}
 	waitForStarts(1)
-	external := models.ProviderRegistration{Address: "http://127.0.0.1:9092", Provider: models.ProviderDefinition{Name: "external"}}
+	external := models.ProviderRegistration{Provider: models.ProviderDefinition{Name: "external"}}
 	if err := supervisor.Reload([]models.ProviderRegistration{registration, external}); err != nil {
 		t.Fatal(err)
 	}
@@ -134,4 +134,32 @@ func TestSupervisorReloadRestartsOnlyChangedProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForStarts(2)
+}
+
+func TestSupervisorPassesControlAddress(t *testing.T) {
+	dir := t.TempDir()
+	addressPath := filepath.Join(dir, "address")
+	script := filepath.Join(dir, "provider.sh")
+	content := "#!/bin/sh\nprintf %s \"$VPN_PROVIDER_CONTROL_ADDRESS\" > " + addressPath + "\ntrap 'exit 0' TERM\nwhile :; do sleep 1; done\n"
+	if err := os.WriteFile(script, []byte(content), 0700); err != nil {
+		t.Fatal(err)
+	}
+	supervisor := NewSupervisor([]models.ProviderRegistration{{
+		Command: script, Provider: models.ProviderDefinition{Name: "test"},
+	}}, "unix:///tmp/providers.sock")
+	if err := supervisor.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer supervisor.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		data, _ := os.ReadFile(addressPath)
+		if string(data) == "unix:///tmp/providers.sock" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("provider control address = %q", data)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }

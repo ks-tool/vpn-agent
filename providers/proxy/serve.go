@@ -5,7 +5,7 @@
   you may not use this file except in compliance with the License.
   You may obtain a copy of the License at
 
-  	http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
   Unless required by applicable law or agreed to in writing, software
   distributed under the License is distributed on an "AS IS" BASIS,
@@ -26,30 +26,34 @@ import (
 	"time"
 
 	"github.com/ks-tool/vpn-agent/v2/internal/api"
-	agentconfig "github.com/ks-tool/vpn-agent/v2/internal/config"
+	"github.com/ks-tool/vpn-agent/v2/internal/provider/transport"
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
+	"github.com/ks-tool/vpn-agent/v2/models"
 	"github.com/ks-tool/vpn-agent/v2/mux/middleware"
 )
 
 type ServeOptions struct {
-	Addr        string
-	TLSCert     string
-	TLSKey      string
-	TLSClientCA string
-	Store       resource.Store
-	Provider    resource.Provider
-	Start       func() error
-	Handler     func(*resource.Runtime) http.Handler
-	Close       func() error
+	Address  string
+	Store    resource.Store
+	Provider resource.Provider
+	Start    func() error
+	Handler  func(*resource.Runtime) http.Handler
+	Close    func() error
 }
 
 func Serve(options ServeOptions) error {
+	address := options.Address
+	if len(address) == 0 {
+		address = transport.ControlAddress()
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	runtime := resource.NewRuntime(options.Store, time.Second, 30*time.Second)
 	defer runtime.Close()
 	if err := runtime.Register(options.Provider); err != nil {
 		return err
 	}
-	runtime.Start(context.Background())
+	runtime.Start(ctx)
 	if options.Start != nil {
 		if err := options.Start(); err != nil {
 			return err
@@ -61,38 +65,10 @@ func Serve(options ServeOptions) error {
 			return api.NewResourceHandler(runtime, middleware.RequestID, middleware.Logging)
 		}
 	}
-	srv := &http.Server{Addr: options.Addr, Handler: handler(runtime)}
-	var err error
-	srv.TLSConfig, err = agentconfig.TLS(options.TLSCert, options.TLSKey, options.TLSClientCA)
-	if err != nil {
-		return err
-	}
-	serveErrors := make(chan error, 1)
-	go func() {
-		if srv.TLSConfig != nil {
-			serveErrors <- srv.ListenAndServeTLS(options.TLSCert, options.TLSKey)
-			return
-		}
-		serveErrors <- srv.ListenAndServe()
-	}()
-
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(signals)
-	select {
-	case err := <-serveErrors:
-		if !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
-	case <-signals:
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		return err
-	}
+	definition := models.ProviderDefinition{Name: options.Provider.Name(), Version: options.Provider.Version(), Resources: options.Provider.Definitions()}
+	serveErr := transport.Serve(ctx, address, definition, handler(runtime), runtime)
 	if options.Close != nil {
-		return options.Close()
+		return errors.Join(serveErr, options.Close())
 	}
-	return nil
+	return serveErr
 }

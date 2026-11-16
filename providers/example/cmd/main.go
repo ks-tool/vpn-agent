@@ -17,29 +17,20 @@
 package main
 
 import (
-	"context"
-	"errors"
-	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
-	"syscall"
-	"time"
 
-	"github.com/ks-tool/vpn-agent/v2/internal/api"
 	agentconfig "github.com/ks-tool/vpn-agent/v2/internal/config"
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
-	"github.com/ks-tool/vpn-agent/v2/mux/middleware"
 	"github.com/ks-tool/vpn-agent/v2/providers/example"
+	"github.com/ks-tool/vpn-agent/v2/providers/proxy"
 
 	"github.com/rs/zerolog/log"
 )
 
-var version = "dev"
-
 type config struct {
-	Addr string `env:"ADDR" envDefault:"127.0.0.1:9090" flag:"addr" help:"HTTP listen address"`
-	DB   string `env:"DB" flag:"db" help:"provider state directory"`
+	AgentAddr string `env:"AGENT_ADDR" flag:"agent-addr" help:"agent provider control address"`
+	DB        string `env:"DB" flag:"db" help:"provider state directory"`
 }
 
 func main() {
@@ -62,23 +53,7 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Send()
 	}
-	runtime := resource.NewRuntime(store, time.Second, 30*time.Second)
-	if err := runtime.Register(provider); err != nil {
-		log.Fatal().Err(err).Send()
+	if err := proxy.Serve(proxy.ServeOptions{Address: cfg.AgentAddr, Store: store, Provider: provider}); err != nil {
+		log.Fatal().Err(err).Msg("provider control connection failed")
 	}
-	runtime.Start(context.Background())
-	defer runtime.Close()
-	server := &http.Server{Addr: cfg.Addr, Handler: api.NewResourceHandler(runtime, middleware.RequestID, middleware.Logging)}
-	go func() {
-		log.Info().Str("addr", cfg.Addr).Str("version", version).Msg("starting example provider")
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatal().Err(err).Send()
-		}
-	}()
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	<-signals
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = server.Shutdown(ctx)
 }
