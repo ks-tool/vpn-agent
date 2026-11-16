@@ -39,27 +39,44 @@ type Reloader struct {
 	runtime       ProviderRuntime
 	registry      *Registry
 	registrations map[string]models.ProviderRegistration
+	failures      map[string]struct{}
 }
 
 func NewReloader(dir, legacyFile string, supervisor *Supervisor, runtime ProviderRuntime, registry *Registry, registrations []models.ProviderRegistration) *Reloader {
-	return &Reloader{dir: dir, legacyFile: legacyFile, supervisor: supervisor, runtime: runtime, registry: registry, registrations: registrationMap(registrations)}
+	failures := make(map[string]struct{})
+	for name := range runtime.Manifest().ProviderErrors {
+		failures[name] = struct{}{}
+	}
+	return &Reloader{dir: dir, legacyFile: legacyFile, supervisor: supervisor, runtime: runtime, registry: registry, registrations: registrationMap(registrations), failures: failures}
 }
 
 func (r *Reloader) Reload() error {
-	registrations, err := RegistrationsDir(r.dir, r.legacyFile)
-	if err != nil {
-		return err
+	registrations, failures := RegistrationsDir(r.dir, r.legacyFile)
+	for name := range r.failures {
+		if _, exists := failures[name]; !exists {
+			r.runtime.SetProviderError(name, nil)
+		}
+	}
+	for name, err := range failures {
+		r.runtime.SetProviderError(name, err)
+	}
+	r.failures = make(map[string]struct{}, len(failures))
+	for name := range failures {
+		r.failures[name] = struct{}{}
 	}
 	desired := registrationMap(registrations)
 	if !reflect.DeepEqual(r.registrations, desired) {
 		if err := r.supervisor.Reload(registrations); err != nil {
+			r.runtime.SetProviderError(RegistryErrorName, err)
 			return err
 		}
 		if err := r.registry.Reload(registrations); err != nil {
+			r.runtime.SetProviderError(RegistryErrorName, err)
 			return err
 		}
 		r.registrations = desired
 	}
+	r.runtime.SetProviderError(RegistryErrorName, nil)
 	for name := range desired {
 		r.runtime.SetProviderError(name, r.supervisor.ProviderError(name))
 	}

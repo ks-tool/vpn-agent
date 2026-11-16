@@ -222,9 +222,9 @@ func TestLoadProviderRegistryDirectory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	providers, err := RegistrationsDir(dir, legacy)
-	if err != nil || len(providers) != 3 {
-		t.Fatalf("RegistrationsDir returned %d providers, %v", len(providers), err)
+	providers, failures := RegistrationsDir(dir, legacy)
+	if len(failures) != 0 || len(providers) != 3 {
+		t.Fatalf("RegistrationsDir returned %d providers, %v", len(providers), failures)
 	}
 }
 

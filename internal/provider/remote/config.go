@@ -20,41 +20,60 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ks-tool/vpn-agent/v2/models"
 )
+
+const RegistryErrorName = "_registry"
 
 type Config struct {
 	ProtocolVersion string                        `json:"protocolVersion"`
 	Providers       []models.ProviderRegistration `json:"providers"`
 }
 
-func RegistrationsDir(dir, legacyFile string) ([]models.ProviderRegistration, error) {
+func RegistrationsDir(dir, legacyFile string) ([]models.ProviderRegistration, map[string]error) {
+	failures := make(map[string]error)
 	registrations, err := Registrations(legacyFile)
 	if err != nil {
-		return nil, err
+		failures[registrationErrorName(legacyFile)] = fmt.Errorf("read provider registration %s: %w", legacyFile, err)
 	}
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
-		return registrations, nil
+		return registrations, failures
 	}
 	if err != nil {
-		return nil, err
+		failures[RegistryErrorName] = fmt.Errorf("read provider registration directory %s: %w", dir, err)
+		return registrations, failures
 	}
 	for _, entry := range entries {
 		extension := filepath.Ext(entry.Name())
 		if entry.IsDir() || (extension != ".json" && extension != ".conf") {
 			continue
 		}
-		registered, err := Registrations(filepath.Join(dir, entry.Name()))
+		path := filepath.Join(dir, entry.Name())
+		registered, err := Registrations(path)
 		if err != nil {
-			return nil, err
+			failures[registrationErrorName(path)] = fmt.Errorf("read provider registration %s: %w", path, err)
+			continue
 		}
 		registrations = append(registrations, registered...)
 	}
-	return registrations, nil
+	return registrations, failures
+}
+
+func registrationErrorName(path string) string {
+	data, err := os.ReadFile(path)
+	if err == nil {
+		var config Config
+		if json.Unmarshal(data, &config) == nil && len(config.Providers) == 1 && len(config.Providers[0].Provider.Name) > 0 {
+			return config.Providers[0].Provider.Name
+		}
+	}
+	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 }
 
 func Registrations(path string) ([]models.ProviderRegistration, error) {

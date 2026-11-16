@@ -145,3 +145,20 @@ func TestReloaderRegistersProviderBeforeProcessConnects(t *testing.T) {
 		t.Fatalf("pending provider is missing from manifest: %+v", manifest.Providers)
 	}
 }
+
+func TestReloaderClearsInitialRegistrationErrorWhenFileIsRemoved(t *testing.T) {
+	dir := t.TempDir()
+	supervisor := NewSupervisor(nil)
+	if err := supervisor.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer supervisor.Close()
+	runtime := &reloaderRuntime{providers: make(map[string]resource.Provider), errors: map[string]string{"awg": "invalid registration"}}
+	reloader := NewReloader(dir, filepath.Join(dir, "providers.conf"), supervisor, runtime, NewRegistry(runtime), nil)
+	if err := reloader.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := runtime.errors["awg"]; exists {
+		t.Fatalf("stale registration error was not cleared: %+v", runtime.errors)
+	}
+}

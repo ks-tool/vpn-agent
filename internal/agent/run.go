@@ -79,14 +79,18 @@ func Run(version string) {
 
 	providerDir := filepath.Join(cfg.DB, "providers.d")
 	providerConfig := filepath.Join(cfg.DB, "providers.conf")
-	registrations, err := providerremote.RegistrationsDir(providerDir, providerConfig)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to read provider registry")
+	registrations, registrationFailures := providerremote.RegistrationsDir(providerDir, providerConfig)
+	for name, registrationErr := range registrationFailures {
+		log.Error().Err(registrationErr).Str("provider", name).Msg("provider registration is invalid; skipping provider")
 	}
 	resourceRuntime.Start(context.Background())
 	providerRegistry := providerremote.NewRegistry(resourceRuntime)
 	if err := providerRegistry.Reload(registrations); err != nil {
-		log.Fatal().Err(err).Msg("failed to register providers")
+		resourceRuntime.SetProviderError(providerremote.RegistryErrorName, err)
+		log.Error().Err(err).Msg("failed to register providers")
+	}
+	for name, registrationErr := range registrationFailures {
+		resourceRuntime.SetProviderError(name, registrationErr)
 	}
 	providerSocket := filepath.Join(cfg.DB, "providers.sock")
 	if err := providerRegistry.Start(providerSocket); err != nil {
@@ -95,10 +99,11 @@ func Run(version string) {
 	defer providerRegistry.Close()
 	supervisor := providerremote.NewSupervisor(registrations, "unix://"+providerSocket)
 	if err := supervisor.Start(context.Background()); err != nil {
-		log.Fatal().Err(err).Msg("failed to start providers")
+		resourceRuntime.SetProviderError(providerremote.RegistryErrorName, err)
+		log.Error().Err(err).Msg("failed to start providers")
 	}
 	defer supervisor.Close()
-	providerReloader := providerremote.NewReloader(providerDir, providerConfig, supervisor, resourceRuntime, providerRegistry, registrations)
+	providerReloader := providerremote.NewReloader(providerDir, providerConfig, supervisor, resourceRuntime, providerRegistry, nil)
 	providerWatchCtx, stopProviderWatch := context.WithCancel(context.Background())
 	providerWatchDone := make(chan struct{})
 	defer func() {
