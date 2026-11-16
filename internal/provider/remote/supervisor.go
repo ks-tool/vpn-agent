@@ -29,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ks-tool/vpn-agent/v2/internal/provider/transport"
 	"github.com/ks-tool/vpn-agent/v2/models"
 	"github.com/rs/zerolog/log"
 )
@@ -85,17 +86,22 @@ func (b *outputTail) String() string {
 }
 
 type Supervisor struct {
-	registrations []models.ProviderRegistration
-	mu            sync.Mutex
-	ctx           context.Context
-	cancel        context.CancelFunc
-	providers     map[string]*supervisedProvider
-	closed        bool
-	wg            sync.WaitGroup
+	registrations  []models.ProviderRegistration
+	controlAddress string
+	mu             sync.Mutex
+	ctx            context.Context
+	cancel         context.CancelFunc
+	providers      map[string]*supervisedProvider
+	closed         bool
+	wg             sync.WaitGroup
 }
 
-func NewSupervisor(registrations []models.ProviderRegistration) *Supervisor {
-	return &Supervisor{registrations: registrations, providers: make(map[string]*supervisedProvider)}
+func NewSupervisor(registrations []models.ProviderRegistration, controlAddress ...string) *Supervisor {
+	address := ""
+	if len(controlAddress) > 0 {
+		address = controlAddress[0]
+	}
+	return &Supervisor{registrations: registrations, controlAddress: address, providers: make(map[string]*supervisedProvider)}
 }
 
 func (s *Supervisor) Start(parent context.Context) error {
@@ -193,6 +199,9 @@ func (s *Supervisor) supervise(ctx context.Context, current *supervisedProvider)
 		for key, value := range registration.Env {
 			cmd.Env = append(cmd.Env, key+"="+value)
 		}
+		if len(s.controlAddress) > 0 {
+			cmd.Env = append(cmd.Env, transport.ControlAddressEnv+"="+s.controlAddress)
+		}
 		cmd.Stdout = io.MultiWriter(os.Stdout, output)
 		cmd.Stderr = io.MultiWriter(os.Stderr, output)
 
@@ -201,6 +210,7 @@ func (s *Supervisor) supervise(ctx context.Context, current *supervisedProvider)
 			current.recordError(fmt.Errorf("start provider: %w", err), output.String())
 			log.Error().Err(err).Str("provider", name).Str("command", registration.Command).Msg("failed to start provider")
 		} else {
+			current.recordError(nil, "")
 			log.Info().Str("provider", name).Int("pid", cmd.Process.Pid).Msg("provider started")
 			go func() { done <- cmd.Wait() }()
 			select {

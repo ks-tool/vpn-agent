@@ -19,9 +19,12 @@ package resource
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/ks-tool/vpn-agent/v2/models"
 )
+
+var ErrReconciliationPending = errors.New("resource reconciliation is pending")
 
 type Provider interface {
 	Name() string

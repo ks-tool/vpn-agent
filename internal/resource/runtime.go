@@ -448,7 +448,14 @@ func (r *Runtime) reconcile(key queueKey) {
 		return
 	}
 
-	if err != nil {
+	if errors.Is(err, ErrReconciliationPending) {
+		if item.Deleted {
+			r.clearAttempts(key)
+			return
+		}
+		current.Resource.Status = statusFor(current.Resource.Status, generation, models.ResourcePending, models.ConditionUnknown, "Reconciling", "resource reconciliation is in progress", nil)
+		r.clearAttempts(key)
+	} else if err != nil {
 		current.Resource.Status = statusFor(current.Resource.Status, generation, models.ResourceDegraded, models.ConditionFalse, "ApplyFailed", err.Error(), current.Resource.Status.Provider)
 		r.retry(key)
 	} else {
@@ -458,6 +465,54 @@ func (r *Runtime) reconcile(key queueKey) {
 	if putErr := r.store.Put(current); putErr == nil {
 		r.publish("MODIFIED", key.provider, current.Resource)
 	}
+}
+
+func (r *Runtime) UpdateProviderStatus(event Event) error {
+	key := queueKey{provider: event.Provider, kind: event.Kind, name: event.Name}
+	r.operationMu.Lock()
+	defer r.operationMu.Unlock()
+	current, err := r.store.Get(key.provider, key.kind, key.name)
+	if storage.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if event.Generation > 0 && event.Generation < current.Resource.Generation {
+		return nil
+	}
+	if event.Type == "DELETED" {
+		if !current.Deleted {
+			return nil
+		}
+		if err := r.store.Delete(key.provider, key.kind, key.name); err != nil && !storage.IsNotFound(err) {
+			return err
+		}
+		r.clearAttempts(key)
+		r.publish("DELETED", key.provider, current.Resource)
+		return nil
+	}
+	if event.Type != "MODIFIED" || event.Status.ObservedGeneration < current.Resource.Generation {
+		return nil
+	}
+	if current.Deleted {
+		if event.Status.Phase != models.ResourceDegraded {
+			return nil
+		}
+	} else if event.Status.Phase != models.ResourceReady && event.Status.Phase != models.ResourceDegraded {
+		return nil
+	}
+	current.Resource.Status = event.Status
+	if err := r.store.Put(current); err != nil {
+		return err
+	}
+	r.publish("MODIFIED", key.provider, current.Resource)
+	if event.Status.Phase == models.ResourceDegraded {
+		r.retry(key)
+	} else {
+		r.clearAttempts(key)
+	}
+	return nil
 }
 
 func statusFor(previous models.ResourceStatus, generation int64, phase models.ResourcePhase, conditionStatus models.ConditionStatus, reason, message string, providerStatus json.RawMessage) models.ResourceStatus {

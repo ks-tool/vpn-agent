@@ -39,7 +39,7 @@ func TestDeployCommand(t *testing.T) {
 
 func TestWriteRegistrationMarksDeployment(t *testing.T) {
 	agentDB := t.TempDir()
-	if err := WriteRegistration("awg", agentDB, Deployment{Port: 9091, EnvPrefix: "VPN_PROVIDER_AWG", StatePath: filepath.Join(agentDB, "state")}); err != nil {
+	if err := WriteRegistration("awg", agentDB, Deployment{EnvPrefix: "VPN_PROVIDER_AWG", StatePath: filepath.Join(agentDB, "state")}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(agentDB, "providers.d", "awg.conf"))

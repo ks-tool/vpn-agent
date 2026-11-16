@@ -36,7 +36,6 @@ import (
 )
 
 type Deployment struct {
-	Port      int
 	CorePath  string
 	EnvPrefix string
 	Args      []string
@@ -95,8 +94,8 @@ func DeployProvider(ctx context.Context, adapter Adapter, configPath string) err
 }
 
 func WriteRegistration(name, agentDB string, deployment Deployment) error {
-	if deployment.Port == 0 || len(deployment.EnvPrefix) == 0 {
-		return errors.New("provider deployment port and env prefix are required")
+	if len(deployment.EnvPrefix) == 0 {
+		return errors.New("provider deployment env prefix is required")
 	}
 	statePath := deployment.StatePath
 	if len(statePath) == 0 {
@@ -110,9 +109,8 @@ func WriteRegistration(name, agentDB string, deployment Deployment) error {
 		return err
 	}
 	env := map[string]string{
-		deployment.EnvPrefix + "_DB":   statePath,
-		deployment.EnvPrefix + "_ADDR": fmt.Sprintf("127.0.0.1:%d", deployment.Port),
-		"VPN_PROVIDER_DEPLOYED_AT":     time.Now().UTC().Format(time.RFC3339Nano),
+		deployment.EnvPrefix + "_DB": statePath,
+		"VPN_PROVIDER_DEPLOYED_AT":   time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	if len(deployment.CorePath) > 0 {
 		env[deployment.EnvPrefix+"_CORE"] = deployment.CorePath
@@ -120,7 +118,6 @@ func WriteRegistration(name, agentDB string, deployment Deployment) error {
 	registration := map[string]any{
 		"protocolVersion": models.ProtocolVersion,
 		"providers": []any{map[string]any{
-			"address": fmt.Sprintf("http://127.0.0.1:%d", deployment.Port), "discover": true,
 			"command": "/usr/local/bin/vpn-provider-" + name,
 			"args":    deployment.Args, "env": env,
 			"provider": map[string]any{"name": name},

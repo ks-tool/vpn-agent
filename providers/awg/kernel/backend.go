@@ -25,7 +25,6 @@ import (
 
 	"github.com/ks-tool/vpn-agent/v2/providers/awg/service"
 
-	"github.com/rs/zerolog/log"
 	"github.com/vishvananda/netlink"
 )
 
@@ -34,6 +33,8 @@ type Backend struct{}
 
 // New returns the kernel backend.
 func New() Backend { return Backend{} }
+
+var linkAdd = netlink.LinkAdd
 
 func Available() bool {
 	return amneziaModuleAvailable() || exec.Command("modinfo", "wireguard").Run() == nil
@@ -52,27 +53,16 @@ func genericLink(iface, kind string) *netlink.GenericLink {
 
 // Add creates the interface's link with the kind the config asks for: a plain
 // WireGuard interface (amnezia false) is created as kind "wireguard" directly.
-// An AmneziaWG interface (amnezia true) is created as kind "amneziawg" so the
-// obfuscation params are honored, falling back to a plain "wireguard" link on
-// hosts that only have the mainline module — or whose amnezia module doesn't
-// allow creating a link over netlink (EINVAL/EOPNOTSUPP). That fallback is
-// logged at warn level because obfuscation silently won't apply there.
+// An AmneziaWG interface (amnezia true) requires kind "amneziawg" so the
+// obfuscation params are honored; a host without working AmneziaWG support
+// returns an error instead of silently downgrading to plain WireGuard.
 func (Backend) Add(iface string, amnezia bool) error {
 	if !amnezia {
-		return netlink.LinkAdd(genericLink(iface, "wireguard"))
+		return linkAdd(genericLink(iface, "wireguard"))
 	}
-
-	err := netlink.LinkAdd(genericLink(iface, "amneziawg"))
-	if err == nil {
-		return nil
+	if err := linkAdd(genericLink(iface, "amneziawg")); err != nil {
+		return fmt.Errorf("create AmneziaWG link %q: %w", iface, err)
 	}
-
-	wgErr := netlink.LinkAdd(genericLink(iface, "wireguard"))
-	if wgErr != nil {
-		return fmt.Errorf("create link %q: amneziawg kind: %v; wireguard kind: %w", iface, err, wgErr)
-	}
-	log.Warn().Str("interface", iface).Err(err).Msg(
-		"AmneziaWG-kind link creation failed; created a plain WireGuard link instead — traffic obfuscation will NOT be applied on this host")
 	return nil
 }
 
@@ -137,8 +127,7 @@ func (Backend) SyncAddr(iface, s string) error {
 // WireGuard interface is always listed — kernel WireGuard support is a
 // prerequisite for running this build at all. An AmneziaWG interface is listed
 // only when the amneziawg kernel module is available (see amneziaModuleAvailable),
-// since without it Add falls back to a plain WireGuard link and obfuscation
-// wouldn't apply.
+// because creating an obfuscated interface on a host without it returns an error.
 func (Backend) Info() service.BackendInfo {
 	amnezia := amneziaModuleAvailable()
 	kinds := []string{"wireguard"}
