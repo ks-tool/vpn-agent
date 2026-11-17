@@ -54,14 +54,15 @@ func (p *Provider) prepareRouteLink(_ context.Context, link models.Link, endpoin
 	if err != nil {
 		return models.LinkOffer{}, err
 	}
-	offer := models.LinkOffer{LinkID: link.ID, Endpoint: endpoint, Data: json.RawMessage(`{}`)}
+	offer := models.LinkOffer{LinkID: link.ID, LinkGeneration: link.Generation, Endpoint: endpoint, Data: json.RawMessage(`{}`)}
 	previous, stateErr := p.links.get(link.ID)
 	if stateErr == nil {
 		if previous.Interface != spec.Interface || previous.Role != role {
 			return models.LinkOffer{}, errors.New("route link state does not match endpoint")
 		}
+		previous.Generation = link.Generation
 		if role == "source" {
-			return offer, nil
+			return offer, p.links.put(link.ID, previous)
 		}
 		if previous.Driver == nil {
 			return models.LinkOffer{}, errors.New("route link state has no driver")
@@ -70,7 +71,11 @@ func (p *Provider) prepareRouteLink(_ context.Context, link models.Link, endpoin
 		if err != nil {
 			return models.LinkOffer{}, err
 		}
-		return preparedRouteLinkOffer(offer, *iface, spec, previous)
+		prepared, err := preparedRouteLinkOffer(offer, *iface, spec, previous)
+		if err != nil {
+			return models.LinkOffer{}, err
+		}
+		return prepared, p.links.put(link.ID, previous)
 	}
 	if !storage.IsNotFound(stateErr) {
 		return models.LinkOffer{}, stateErr
@@ -85,7 +90,7 @@ func (p *Provider) prepareRouteLink(_ context.Context, link models.Link, endpoin
 				return models.LinkOffer{}, errors.New("AWG interface already has an outgoing link")
 			}
 		}
-		return offer, p.links.put(link.ID, linkState{LinkID: link.ID, Interface: spec.Interface, Role: role})
+		return offer, p.links.put(link.ID, linkState{LinkID: link.ID, Generation: link.Generation, Interface: spec.Interface, Role: role})
 	}
 	iface, err := p.store.Get(spec.Interface)
 	if err != nil {
@@ -136,7 +141,7 @@ func (p *Provider) prepareRouteLink(_ context.Context, link models.Link, endpoin
 	if err != nil {
 		return models.LinkOffer{}, err
 	}
-	state := linkState{LinkID: link.ID, Interface: spec.Interface, Role: role, PeerPublicKey: clientPeer.Key.String(), Driver: driver}
+	state := linkState{LinkID: link.ID, Generation: link.Generation, Interface: spec.Interface, Role: role, PeerPublicKey: clientPeer.Key.String(), Driver: driver}
 	return offer, p.links.put(link.ID, state)
 }
 
@@ -155,7 +160,7 @@ func preparedRouteLinkOffer(offer models.LinkOffer, iface awgmodels.InterfaceCon
 	return offer, nil
 }
 
-func (p *Provider) commitRouteLink(_ context.Context, link models.Link, endpoint models.LinkEndpoint, remote models.LinkOffer) error {
+func (p *Provider) commitRouteLink(ctx context.Context, link models.Link, endpoint models.LinkEndpoint, remote models.LinkOffer) error {
 	role, err := localLinkRole(link, endpoint)
 	if err != nil {
 		return err
@@ -197,12 +202,12 @@ func (p *Provider) commitRouteLink(_ context.Context, link models.Link, endpoint
 		}
 		if previous, stateErr := p.links.get(link.ID); stateErr == nil && previous.Driver != nil {
 			_ = p.connectors.Stop(link.ID)
-			removeRoutePolicy(previous.Interface, previous.Table)
+			removeRoutePolicyContext(ctx, previous.Interface, previous.Table)
 		}
 		if err := p.connectors.Apply(link.ID, driver); err != nil {
 			return err
 		}
-		if err := applyRoutePolicy(spec.Interface, driver.TUN, table); err != nil {
+		if err := applyRoutePolicyContext(ctx, spec.Interface, driver.TUN, table); err != nil {
 			_ = p.connectors.Stop(link.ID)
 			return err
 		}
@@ -246,7 +251,7 @@ func (p *Provider) commitRouteLink(_ context.Context, link models.Link, endpoint
 	state.PostDown = []string{firewallHook("exit", "remove", 0, state.Mark)}
 	cfg.PreUp = append(cfg.PreUp, state.PreUp...)
 	cfg.PostDown = append(cfg.PostDown, state.PostDown...)
-	if err := p.network.One(old, cfg); err != nil {
+	if err := p.applyNetwork(ctx, old, cfg); err != nil {
 		return err
 	}
 	if err := p.store.Set(&cfg); err != nil {
@@ -255,7 +260,7 @@ func (p *Provider) commitRouteLink(_ context.Context, link models.Link, endpoint
 	return p.links.put(link.ID, state)
 }
 
-func (p *Provider) deleteRouteLink(_ context.Context, link models.Link, _ models.LinkEndpoint, _ *models.LinkOffer) error {
+func (p *Provider) deleteRouteLink(ctx context.Context, link models.Link, _ models.LinkEndpoint, _ *models.LinkOffer) error {
 	state, err := p.links.get(link.ID)
 	if err != nil {
 		if storage.IsNotFound(err) {
@@ -267,7 +272,7 @@ func (p *Provider) deleteRouteLink(_ context.Context, link models.Link, _ models
 		if err := p.connectors.Stop(link.ID); err != nil {
 			return err
 		}
-		removeRoutePolicy(state.Interface, state.Table)
+		removeRoutePolicyContext(ctx, state.Interface, state.Table)
 		return p.links.delete(link.ID)
 	}
 	old, err := p.store.Get(state.Interface)
@@ -284,7 +289,7 @@ func (p *Provider) deleteRouteLink(_ context.Context, link models.Link, _ models
 	cfg.PreDown = append([]string(nil), old.PreDown...)
 	cfg.PostDown = append([]string(nil), old.PostDown...)
 	removeLinkArtifacts(&cfg, state)
-	if err := p.network.One(old, cfg); err != nil {
+	if err := p.applyNetwork(ctx, old, cfg); err != nil {
 		return err
 	}
 	if err := p.store.Set(&cfg); err != nil {
@@ -361,23 +366,35 @@ func routeClientAddress(config awgmodels.InterfaceConfig, linkID string) (string
 }
 
 func applyRoutePolicy(iface, tun string, table int) error {
-	_ = runIP("rule", "del", "iif", iface, "table", strconv.Itoa(table), "priority", strconv.Itoa(table))
-	if err := runIP("rule", "add", "iif", iface, "table", strconv.Itoa(table), "priority", strconv.Itoa(table)); err != nil {
+	return applyRoutePolicyContext(context.Background(), iface, tun, table)
+}
+
+func applyRoutePolicyContext(ctx context.Context, iface, tun string, table int) error {
+	_ = runIPContext(ctx, "rule", "del", "iif", iface, "table", strconv.Itoa(table), "priority", strconv.Itoa(table))
+	if err := runIPContext(ctx, "rule", "add", "iif", iface, "table", strconv.Itoa(table), "priority", strconv.Itoa(table)); err != nil {
 		return err
 	}
-	return runIP("route", "replace", "default", "dev", tun, "table", strconv.Itoa(table))
+	return runIPContext(ctx, "route", "replace", "default", "dev", tun, "table", strconv.Itoa(table))
 }
 
 func removeRoutePolicy(iface string, table int) {
+	removeRoutePolicyContext(context.Background(), iface, table)
+}
+
+func removeRoutePolicyContext(ctx context.Context, iface string, table int) {
 	if len(iface) == 0 || table == 0 {
 		return
 	}
-	_ = runIP("route", "del", "default", "table", strconv.Itoa(table))
-	_ = runIP("rule", "del", "iif", iface, "table", strconv.Itoa(table), "priority", strconv.Itoa(table))
+	_ = runIPContext(ctx, "route", "del", "default", "table", strconv.Itoa(table))
+	_ = runIPContext(ctx, "rule", "del", "iif", iface, "table", strconv.Itoa(table), "priority", strconv.Itoa(table))
 }
 
 func runIP(arguments ...string) error {
-	output, err := exec.Command("ip", arguments...).CombinedOutput()
+	return runIPContext(context.Background(), arguments...)
+}
+
+func runIPContext(ctx context.Context, arguments ...string) error {
+	output, err := exec.CommandContext(ctx, "ip", arguments...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ip %s: %w: %s", strings.Join(arguments, " "), err, strings.TrimSpace(string(output)))
 	}

@@ -64,10 +64,21 @@ func (s *providerSession) request(ctx context.Context, message *providerv1.Agent
 		s.mu.Unlock()
 	}()
 	s.sendMu.Lock()
-	err := s.stream.Send(message)
-	s.sendMu.Unlock()
-	if err != nil {
-		return nil, err
+	sent := make(chan error, 1)
+	go func() { sent <- s.stream.Send(message) }()
+	select {
+	case err := <-sent:
+		s.sendMu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+	case <-ctx.Done():
+		s.sendMu.Unlock()
+		s.close()
+		return nil, ctx.Err()
+	case <-s.done:
+		s.sendMu.Unlock()
+		return nil, errors.New("provider disconnected")
 	}
 	select {
 	case result := <-response:
@@ -226,22 +237,22 @@ func (p *Provider) Action(ctx context.Context, item models.Resource, action stri
 func (p *Provider) PrepareLink(ctx context.Context, link models.Link, endpoint models.LinkEndpoint) (models.LinkOffer, error) {
 	var offer models.LinkOffer
 	request := models.LinkRequest{Link: link, Endpoint: endpoint}
-	err := p.do(ctx, http.MethodPost, "/v1/providers/"+url.PathEscape(p.name)+"/links/prepare", request, &offer)
+	err := p.do(ctx, http.MethodPost, "/v2/providers/"+url.PathEscape(p.name)+"/links/prepare", request, &offer)
 	return offer, err
 }
 
 func (p *Provider) CommitLink(ctx context.Context, link models.Link, endpoint models.LinkEndpoint, remote models.LinkOffer) error {
 	request := models.LinkRequest{Link: link, Endpoint: endpoint, RemoteOffer: &remote}
-	return p.do(ctx, http.MethodPost, "/v1/providers/"+url.PathEscape(p.name)+"/links/commit", request, nil)
+	return p.do(ctx, http.MethodPost, "/v2/providers/"+url.PathEscape(p.name)+"/links/commit", request, nil)
 }
 
 func (p *Provider) DeleteLink(ctx context.Context, link models.Link, endpoint models.LinkEndpoint, remote *models.LinkOffer) error {
 	request := models.LinkRequest{Link: link, Endpoint: endpoint, RemoteOffer: remote}
-	return p.do(ctx, http.MethodPost, "/v1/providers/"+url.PathEscape(p.name)+"/links/delete", request, nil)
+	return p.do(ctx, http.MethodPost, "/v2/providers/"+url.PathEscape(p.name)+"/links/delete", request, nil)
 }
 
 func resourcePath(provider, kind, name string) string {
-	return "/v1/providers/" + url.PathEscape(provider) + "/resources/" + url.PathEscape(kind) + "/" + url.PathEscape(name)
+	return "/v2/providers/" + url.PathEscape(provider) + "/resources/" + url.PathEscape(kind) + "/" + url.PathEscape(name)
 }
 
 func (p *Provider) request(ctx context.Context, method, path string, body []byte, headers map[string]string) (*providerv1.Response, error) {
@@ -251,7 +262,11 @@ func (p *Provider) request(ctx context.Context, method, path string, body []byte
 	if session == nil {
 		return nil, fmt.Errorf("remote provider %s is not connected", p.name)
 	}
-	return session.request(ctx, &providerv1.AgentMessage{Method: method, Path: path, Body: body, Headers: headers})
+	response, err := session.request(ctx, &providerv1.AgentMessage{Method: method, Path: path, Body: body, Headers: headers})
+	if errors.Is(err, context.DeadlineExceeded) {
+		session.close()
+	}
+	return response, err
 }
 
 func (p *Provider) Bridge(ctx context.Context, method, path string, body []byte, headers map[string]string) (*resource.BridgeResponse, error) {

@@ -44,13 +44,18 @@ type queueKey struct {
 	name     string
 }
 
+func (k queueKey) operationKey() string {
+	return k.provider + "\x00" + k.kind + "\x00" + k.name
+}
+
 type Runtime struct {
-	store          Store
-	retryDelay     time.Duration
-	resyncInterval time.Duration
+	store            Store
+	retryDelay       time.Duration
+	resyncInterval   time.Duration
+	operationTimeout time.Duration
 
 	mu             sync.RWMutex
-	operationMu    sync.Mutex
+	operations     *operationLocks
 	providers      map[string]Provider
 	providerErrors map[string]string
 	pending        map[queueKey]bool
@@ -63,13 +68,28 @@ type Runtime struct {
 	wg             sync.WaitGroup
 }
 
-func NewRuntime(store Store, retryDelay, resyncInterval time.Duration) *Runtime {
-	return &Runtime{
-		store: store, retryDelay: retryDelay, resyncInterval: resyncInterval,
-		providers: make(map[string]Provider), providerErrors: make(map[string]string), pending: make(map[queueKey]bool),
+type RuntimeOption func(*Runtime)
+
+func WithOperationTimeout(timeout time.Duration) RuntimeOption {
+	return func(runtime *Runtime) {
+		if timeout > 0 {
+			runtime.operationTimeout = timeout
+		}
+	}
+}
+
+func NewRuntime(store Store, retryDelay, resyncInterval time.Duration, options ...RuntimeOption) *Runtime {
+	runtime := &Runtime{
+		store: store, retryDelay: retryDelay, resyncInterval: resyncInterval, operationTimeout: 30 * time.Second,
+		operations: newOperationLocks(),
+		providers:  make(map[string]Provider), providerErrors: make(map[string]string), pending: make(map[queueKey]bool),
 		attempts: make(map[queueKey]int), subs: make(map[chan Event]struct{}),
 		queue: make(chan queueKey, 1024),
 	}
+	for _, option := range options {
+		option(runtime)
+	}
+	return runtime
 }
 
 func (r *Runtime) Register(provider Provider) error {
@@ -195,7 +215,7 @@ func (r *Runtime) Get(providerName, kind, name string) (models.Resource, error) 
 }
 
 func (r *Runtime) Put(providerName, kind, name string, desired models.Resource) (models.Resource, error) {
-	_, definition, err := r.definition(providerName, kind)
+	provider, definition, err := r.definition(providerName, kind)
 	if err != nil {
 		return models.Resource{}, err
 	}
@@ -215,6 +235,13 @@ func (r *Runtime) Put(providerName, kind, name string, desired models.Resource) 
 	desired.Kind = kind
 	desired.Name = name
 	key := queueKey{provider: providerName, kind: kind, name: name}
+	operationCtx, cancel := context.WithTimeout(context.Background(), r.operationTimeout)
+	defer cancel()
+	unlock, err := r.operations.lock(operationCtx, key.operationKey())
+	if err != nil {
+		return models.Resource{}, err
+	}
+	defer unlock()
 	existing, err := r.store.Get(providerName, kind, name)
 	if err != nil && !storage.IsNotFound(err) {
 		return models.Resource{}, err
@@ -224,13 +251,27 @@ func (r *Runtime) Put(providerName, kind, name string, desired models.Resource) 
 			return models.Resource{}, errors.New("resource id is immutable")
 		}
 		desired.ID = existing.Resource.ID
-		if desired.Generation == existing.Resource.Generation && reflect.DeepEqual(desired.Spec, existing.Resource.Spec) {
+		if reflect.DeepEqual(desired.Spec, existing.Resource.Spec) {
 			return existing.Resource, nil
+		}
+		if desired.Generation != existing.Resource.Generation {
+			return models.Resource{}, fmt.Errorf("%w: expected %d, got %d", ErrGenerationConflict, existing.Resource.Generation, desired.Generation)
+		}
+		if updates, ok := provider.(UpdateProvider); ok {
+			ctx, cancel := context.WithTimeout(context.Background(), r.operationTimeout)
+			err := updates.ValidateUpdate(ctx, existing.Resource, desired)
+			cancel()
+			if err != nil {
+				return models.Resource{}, err
+			}
 		}
 		desired.Generation = existing.Resource.Generation + 1
 		desired.Status = existing.Resource.Status
 		desired.Status.Phase = models.ResourcePending
 	} else {
+		if desired.Generation > 1 {
+			return models.Resource{}, fmt.Errorf("%w: new resource must use generation 0 or 1", ErrGenerationConflict)
+		}
 		if desired.ID == "" {
 			desired.ID = uuid.New().String()
 		}
@@ -249,6 +290,14 @@ func (r *Runtime) Delete(providerName, kind, name string) error {
 	if _, _, err := r.definition(providerName, kind); err != nil {
 		return err
 	}
+	key := queueKey{provider: providerName, kind: kind, name: name}
+	operationCtx, cancel := context.WithTimeout(context.Background(), r.operationTimeout)
+	defer cancel()
+	unlock, err := r.operations.lock(operationCtx, key.operationKey())
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	item, err := r.store.Get(providerName, kind, name)
 	if err != nil {
 		if storage.IsNotFound(err) {
@@ -265,7 +314,7 @@ func (r *Runtime) Delete(providerName, kind, name string) error {
 		}
 		r.publish("MODIFIED", providerName, item.Resource)
 	}
-	r.enqueue(queueKey{provider: providerName, kind: kind, name: name})
+	r.enqueue(key)
 	return nil
 }
 
@@ -280,6 +329,8 @@ func (r *Runtime) Bridge(ctx context.Context, providerName, method, path string,
 	if !ok {
 		return nil, errors.New("provider does not support HTTP bridge")
 	}
+	ctx, cancel := context.WithTimeout(ctx, r.operationTimeout)
+	defer cancel()
 	return bridge.Bridge(ctx, method, path, body, headers)
 }
 
@@ -290,10 +341,14 @@ func (r *Runtime) Action(ctx context.Context, providerName, kind, name, actionNa
 	}
 	found := false
 	mutating := false
+	timeout := r.operationTimeout
 	for _, action := range definition.Actions {
 		if action.Name == actionName {
 			found = true
 			mutating = action.Mutating
+			if action.TimeoutSeconds > 0 {
+				timeout = time.Duration(action.TimeoutSeconds) * time.Second
+			}
 			break
 		}
 	}
@@ -304,6 +359,14 @@ func (r *Runtime) Action(ctx context.Context, providerName, kind, name, actionNa
 	if !ok {
 		return models.ActionResult{}, fmt.Errorf("%w: %s", ErrUnknownAction, actionName)
 	}
+	key := queueKey{provider: providerName, kind: kind, name: name}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	unlock, err := r.operations.lock(ctx, key.operationKey())
+	if err != nil {
+		return models.ActionResult{}, err
+	}
+	defer unlock()
 	item, err := r.store.Get(providerName, kind, name)
 	if err != nil {
 		return models.ActionResult{}, err
@@ -311,11 +374,9 @@ func (r *Runtime) Action(ctx context.Context, providerName, kind, name, actionNa
 	if item.Deleted {
 		return models.ActionResult{}, storage.ErrNotFound
 	}
-	r.operationMu.Lock()
 	result, err := actions.Action(ctx, item.Resource, actionName, arguments)
-	r.operationMu.Unlock()
 	if err == nil && mutating {
-		r.enqueue(queueKey{provider: providerName, kind: kind, name: name})
+		r.enqueue(key)
 	}
 	return result, err
 }
@@ -325,28 +386,55 @@ func (r *Runtime) PrepareLink(ctx context.Context, providerName string, link mod
 	if err != nil {
 		return models.LinkOffer{}, err
 	}
-	r.operationMu.Lock()
-	defer r.operationMu.Unlock()
-	return provider.PrepareLink(ctx, link, endpoint)
+	ctx, cancel := context.WithTimeout(ctx, r.operationTimeout)
+	defer cancel()
+	unlock, err := r.operations.lock(ctx, providerName+"\x00link")
+	if err != nil {
+		return models.LinkOffer{}, err
+	}
+	defer unlock()
+	offer, err := provider.PrepareLink(ctx, link, endpoint)
+	if err != nil {
+		return models.LinkOffer{}, err
+	}
+	return offer, models.ValidateLinkOffer(link, offer)
 }
 
 func (r *Runtime) CommitLink(ctx context.Context, providerName string, link models.Link, endpoint models.LinkEndpoint, remote models.LinkOffer) error {
+	if err := models.ValidateLinkOffer(link, remote); err != nil {
+		return err
+	}
 	provider, err := r.linkProvider(providerName)
 	if err != nil {
 		return err
 	}
-	r.operationMu.Lock()
-	defer r.operationMu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, r.operationTimeout)
+	defer cancel()
+	unlock, err := r.operations.lock(ctx, providerName+"\x00link")
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	return provider.CommitLink(ctx, link, endpoint, remote)
 }
 
 func (r *Runtime) DeleteLink(ctx context.Context, providerName string, link models.Link, endpoint models.LinkEndpoint, remote *models.LinkOffer) error {
+	if remote != nil {
+		if err := models.ValidateLinkOffer(link, *remote); err != nil {
+			return err
+		}
+	}
 	provider, err := r.linkProvider(providerName)
 	if err != nil {
 		return err
 	}
-	r.operationMu.Lock()
-	defer r.operationMu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, r.operationTimeout)
+	defer cancel()
+	unlock, err := r.operations.lock(ctx, providerName+"\x00link")
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	return provider.DeleteLink(ctx, link, endpoint, remote)
 }
 
@@ -418,7 +506,11 @@ func (r *Runtime) run() {
 			r.mu.Lock()
 			delete(r.pending, key)
 			r.mu.Unlock()
-			r.reconcile(key)
+			r.wg.Add(1)
+			go func(key queueKey) {
+				defer r.wg.Done()
+				r.reconcile(key)
+			}(key)
 		}
 	}
 }
@@ -428,8 +520,13 @@ func (r *Runtime) reconcile(key queueKey) {
 	if err != nil {
 		return
 	}
-	r.operationMu.Lock()
-	defer r.operationMu.Unlock()
+	ctx, cancel := context.WithTimeout(r.ctx, r.operationTimeout)
+	defer cancel()
+	unlock, err := r.operations.lock(ctx, key.operationKey())
+	if err != nil {
+		return
+	}
+	defer unlock()
 	item, err := r.store.Get(key.provider, key.kind, key.name)
 	if err != nil {
 		return
@@ -438,10 +535,10 @@ func (r *Runtime) reconcile(key queueKey) {
 	generation := item.Resource.Generation
 	var providerStatus json.RawMessage
 	if item.Deleted {
-		err = provider.Delete(r.ctx, item.Resource)
+		err = provider.Delete(ctx, item.Resource)
 	} else {
-		if err = provider.Validate(r.ctx, item.Resource); err == nil {
-			providerStatus, err = provider.Reconcile(r.ctx, item.Resource)
+		if err = provider.Validate(ctx, item.Resource); err == nil {
+			providerStatus, err = provider.Reconcile(ctx, item.Resource)
 		}
 	}
 
@@ -483,8 +580,13 @@ func (r *Runtime) reconcile(key queueKey) {
 
 func (r *Runtime) UpdateProviderStatus(event Event) error {
 	key := queueKey{provider: event.Provider, kind: event.Kind, name: event.Name}
-	r.operationMu.Lock()
-	defer r.operationMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), r.operationTimeout)
+	defer cancel()
+	unlock, err := r.operations.lock(ctx, key.operationKey())
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	current, err := r.store.Get(key.provider, key.kind, key.name)
 	if storage.IsNotFound(err) {
 		return nil

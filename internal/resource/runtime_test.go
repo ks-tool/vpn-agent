@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -326,4 +327,284 @@ func TestRuntimeRegistersAndUnregistersProviderAfterStart(t *testing.T) {
 	if err := runtime.Register(&testProvider{}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type namedTestProvider struct {
+	*testProvider
+	name string
+}
+
+func (p namedTestProvider) Name() string { return p.name }
+
+type blockingProvider struct {
+	name    string
+	started chan struct{}
+	once    sync.Once
+}
+
+func (p *blockingProvider) Name() string    { return p.name }
+func (p *blockingProvider) Version() string { return "1" }
+func (p *blockingProvider) Definitions() []models.ResourceDefinition {
+	return []models.ResourceDefinition{{APIVersion: "test/v1", Kind: "Service"}}
+}
+func (p *blockingProvider) Validate(context.Context, models.Resource) error { return nil }
+func (p *blockingProvider) Reconcile(ctx context.Context, _ models.Resource) (json.RawMessage, error) {
+	p.once.Do(func() { close(p.started) })
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func (p *blockingProvider) Delete(ctx context.Context, _ models.Resource) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestRuntimeHungProviderDoesNotBlockOtherProvider(t *testing.T) {
+	blocked := &blockingProvider{name: "blocked", started: make(chan struct{})}
+	healthy := namedTestProvider{testProvider: &testProvider{}, name: "healthy"}
+	runtime := NewRuntime(NewMemoryStore(), time.Hour, time.Hour, WithOperationTimeout(20*time.Millisecond))
+	if err := runtime.Register(blocked); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Register(healthy); err != nil {
+		t.Fatal(err)
+	}
+	runtime.Start(context.Background())
+	defer runtime.Close()
+	if _, err := runtime.Put("blocked", "Service", "stuck", models.Resource{APIVersion: "test/v1", Spec: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Put("healthy", "Service", "ready", models.Resource{APIVersion: "test/v1", Spec: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		item, err := runtime.Get("healthy", "Service", "ready")
+		if err == nil && item.Status.Phase == models.ResourceReady {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("healthy provider was blocked by another provider")
+}
+
+type concurrentProvider struct {
+	*testProvider
+	active int
+	peak   int
+}
+
+func (p *concurrentProvider) Reconcile(ctx context.Context, item models.Resource) (json.RawMessage, error) {
+	p.mu.Lock()
+	p.active++
+	if p.active > p.peak {
+		p.peak = p.active
+	}
+	p.mu.Unlock()
+	select {
+	case <-time.After(10 * time.Millisecond):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	p.mu.Lock()
+	p.active--
+	p.mu.Unlock()
+	return p.testProvider.Reconcile(ctx, item)
+}
+
+func TestRuntimeSameResourceOperationsAreSerialized(t *testing.T) {
+	provider := &concurrentProvider{testProvider: &testProvider{}}
+	runtime := NewRuntime(NewMemoryStore(), time.Millisecond, time.Hour)
+	if err := runtime.Register(provider); err != nil {
+		t.Fatal(err)
+	}
+	runtime.Start(context.Background())
+	defer runtime.Close()
+	created, err := runtime.Put("test", "Service", "public", models.Resource{APIVersion: "test/v1", Spec: json.RawMessage(`{"revision":1}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for revision := 2; revision <= 4; revision++ {
+		created.Spec = json.RawMessage(fmt.Sprintf(`{"revision":%d}`, revision))
+		updated, err := runtime.Put("test", "Service", "public", created)
+		if err != nil {
+			t.Fatal(err)
+		}
+		created = updated
+	}
+	waitForStatus(t, runtime, 4, models.ResourceReady)
+	provider.mu.Lock()
+	peak := provider.peak
+	provider.mu.Unlock()
+	if peak != 1 {
+		t.Fatalf("same resource reconcile concurrency = %d", peak)
+	}
+}
+
+type deadlineProvider struct {
+	*testProvider
+	calls int
+}
+
+func (p *deadlineProvider) Reconcile(ctx context.Context, item models.Resource) (json.RawMessage, error) {
+	p.mu.Lock()
+	p.calls++
+	call := p.calls
+	p.mu.Unlock()
+	if call == 1 {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return p.testProvider.Reconcile(ctx, item)
+}
+
+func TestRuntimeOperationDeadlineRetries(t *testing.T) {
+	provider := &deadlineProvider{testProvider: &testProvider{}}
+	runtime := NewRuntime(NewMemoryStore(), time.Millisecond, time.Hour, WithOperationTimeout(20*time.Millisecond))
+	if err := runtime.Register(provider); err != nil {
+		t.Fatal(err)
+	}
+	runtime.Start(context.Background())
+	defer runtime.Close()
+	if _, err := runtime.Put("test", "Service", "public", models.Resource{APIVersion: "test/v1", Spec: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	waitForStatus(t, runtime, 1, models.ResourceReady)
+}
+
+type timeoutBridgeProvider struct {
+	*testProvider
+}
+
+func (p *timeoutBridgeProvider) Bridge(ctx context.Context, _, _ string, _ []byte, _ map[string]string) (*BridgeResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestRuntimeBridgeHonorsOperationTimeout(t *testing.T) {
+	provider := &timeoutBridgeProvider{testProvider: &testProvider{}}
+	runtime := NewRuntime(NewMemoryStore(), time.Millisecond, time.Hour, WithOperationTimeout(20*time.Millisecond))
+	if err := runtime.Register(provider); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	started := time.Now()
+	_, err := runtime.Bridge(ctx, "test", "GET", "/metrics", nil, nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("bridge error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("runtime did not apply operation timeout: %v", elapsed)
+	}
+}
+
+type declaredTimeoutActionProvider struct {
+	*testProvider
+}
+
+func (p *declaredTimeoutActionProvider) Definitions() []models.ResourceDefinition {
+	return []models.ResourceDefinition{{
+		APIVersion: "test/v1", Kind: "Service",
+		Actions: []models.ActionDefinition{{Name: "wait", Title: "Wait", ResultType: models.ActionResultJSON, TimeoutSeconds: 1}},
+	}}
+}
+
+func (p *declaredTimeoutActionProvider) Action(ctx context.Context, _ models.Resource, _ string, _ json.RawMessage) (models.ActionResult, error) {
+	<-ctx.Done()
+	return models.ActionResult{}, ctx.Err()
+}
+
+func TestRuntimeActionUsesDeclaredTimeout(t *testing.T) {
+	provider := &declaredTimeoutActionProvider{testProvider: &testProvider{}}
+	runtime := NewRuntime(NewMemoryStore(), time.Millisecond, time.Hour, WithOperationTimeout(20*time.Millisecond))
+	if err := runtime.Register(provider); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Put("test", "Service", "public", models.Resource{APIVersion: "test/v1", Spec: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := runtime.Action(ctx, "test", "Service", "public", "wait", json.RawMessage(`{}`))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("action error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 1300*time.Millisecond {
+		t.Fatalf("action ignored declared timeout: %v", elapsed)
+	}
+}
+
+func TestRuntimePutRetryAndConflictMatrix(t *testing.T) {
+	create := func(t *testing.T) (*Runtime, *testProvider, models.Resource) {
+		t.Helper()
+		provider := &testProvider{}
+		runtime := NewRuntime(NewMemoryStore(), time.Millisecond, time.Hour)
+		if err := runtime.Register(provider); err != nil {
+			t.Fatal(err)
+		}
+		runtime.Start(context.Background())
+		t.Cleanup(runtime.Close)
+		created, err := runtime.Put("test", "Service", "public", models.Resource{APIVersion: "test/v1", Spec: json.RawMessage(`{"revision":1}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitForStatus(t, runtime, 1, models.ResourceReady)
+		return runtime, provider, created
+	}
+	t.Run("exact retry after response loss", func(t *testing.T) {
+		runtime, provider, created := create(t)
+		updated := created
+		updated.Spec = json.RawMessage(`{"revision":2}`)
+		accepted, err := runtime.Put("test", "Service", "public", updated)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitForStatus(t, runtime, 2, models.ResourceReady)
+		repeated, err := runtime.Put("test", "Service", "public", updated)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if accepted.Generation != 2 || repeated.Generation != 2 {
+			t.Fatalf("retry generation = %d", repeated.Generation)
+		}
+		time.Sleep(10 * time.Millisecond)
+		if reconciles, _ := provider.counts(); reconciles != 2 {
+			t.Fatalf("retry triggered reconcile %d", reconciles)
+		}
+	})
+	t.Run("same spec with stale generation", func(t *testing.T) {
+		runtime, provider, created := create(t)
+		created.Generation = 0
+		repeated, err := runtime.Put("test", "Service", "public", created)
+		if err != nil || repeated.Generation != 1 {
+			t.Fatalf("idempotent retry = %+v, %v", repeated, err)
+		}
+		if reconciles, _ := provider.counts(); reconciles != 1 {
+			t.Fatalf("idempotent retry triggered reconcile %d", reconciles)
+		}
+	})
+	t.Run("different spec with stale generation", func(t *testing.T) {
+		runtime, _, created := create(t)
+		created.Generation = 0
+		created.Spec = json.RawMessage(`{"revision":2}`)
+		if _, err := runtime.Put("test", "Service", "public", created); !errors.Is(err, ErrGenerationConflict) {
+			t.Fatalf("stale update error = %v", err)
+		}
+	})
+	t.Run("different spec with matching generation", func(t *testing.T) {
+		runtime, _, created := create(t)
+		created.Spec = json.RawMessage(`{"revision":2}`)
+		updated, err := runtime.Put("test", "Service", "public", created)
+		if err != nil || updated.Generation != 2 {
+			t.Fatalf("current update = %+v, %v", updated, err)
+		}
+	})
+	t.Run("conflicting immutable ID", func(t *testing.T) {
+		runtime, _, created := create(t)
+		created.ID = "different-id"
+		if _, err := runtime.Put("test", "Service", "public", created); err == nil {
+			t.Fatal("immutable resource ID was changed")
+		}
+	})
 }

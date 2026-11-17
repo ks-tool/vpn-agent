@@ -19,14 +19,17 @@ package remote
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ks-tool/vpn-agent/v2/internal/api"
 	"github.com/ks-tool/vpn-agent/v2/internal/provider/transport"
+	"github.com/ks-tool/vpn-agent/v2/internal/provider/transport/providerv1"
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
 	"github.com/ks-tool/vpn-agent/v2/models"
 	"github.com/ks-tool/vpn-agent/v2/providers/example"
@@ -45,7 +48,7 @@ func startProviderClient(t *testing.T, socket string, definition models.Provider
 	go func() {
 		defer close(client.done)
 		handler := http.NewServeMux()
-		handler.Handle("/v1/", api.NewResourceHandler(runtime))
+		handler.Handle("/v2/", api.NewResourceHandler(runtime))
 		handler.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`{"bridged":true}`))
 		})
@@ -66,7 +69,7 @@ func (c *providerClient) stop(t *testing.T) {
 	}
 }
 
-func startProviderPair(t *testing.T, externalProvider resource.Provider) (*resource.Runtime, *resource.Runtime, *Registry, string, models.ProviderDefinition) {
+func startProviderPair(t *testing.T, externalProvider resource.Provider, options ...resource.RuntimeOption) (*resource.Runtime, *resource.Runtime, *Registry, string, models.ProviderDefinition) {
 	t.Helper()
 	definition := models.ProviderDefinition{Name: "example", Version: "0.1.0", Resources: externalProvider.Definitions()}
 	externalStore, err := resource.NewFileStore(t.TempDir())
@@ -83,7 +86,7 @@ func startProviderPair(t *testing.T, externalProvider resource.Provider) (*resou
 	if err != nil {
 		t.Fatal(err)
 	}
-	core := resource.NewRuntime(coreStore, time.Millisecond, time.Hour)
+	core := resource.NewRuntime(coreStore, time.Millisecond, time.Hour, options...)
 	core.Start(context.Background())
 	registry := NewRegistry(core)
 	registration := models.ProviderRegistration{Provider: models.ProviderDefinition{Name: definition.Name}}
@@ -129,7 +132,7 @@ func TestExternalProviderLifecycleDisconnectAndReconnect(t *testing.T) {
 	if err != nil || string(bridged.Body) != `{"bridged":true}` {
 		t.Fatalf("external bridge: %+v, %v", bridged, err)
 	}
-	link := models.Link{ID: "link", Kind: "example", Source: models.LinkEndpoint{ResourceID: "a"}, Target: models.LinkEndpoint{ResourceID: "b"}}
+	link := models.Link{ID: "link", Kind: "example", Generation: 1, Source: models.LinkEndpoint{ResourceID: "a"}, Target: models.LinkEndpoint{ResourceID: "b"}}
 	offer, err := core.PrepareLink(context.Background(), "example", link, link.Source)
 	if err != nil {
 		t.Fatal(err)
@@ -292,4 +295,128 @@ func waitRemoteDelete(t *testing.T, runtime *resource.Runtime, name string) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("resource %s was not deleted", name)
+}
+
+type flakyRemoteActionProvider struct {
+	resource.Provider
+	mu    sync.Mutex
+	calls int
+}
+
+func (p *flakyRemoteActionProvider) Action(ctx context.Context, item models.Resource, name string, arguments json.RawMessage) (models.ActionResult, error) {
+	p.mu.Lock()
+	p.calls++
+	call := p.calls
+	p.mu.Unlock()
+	if call == 1 {
+		<-ctx.Done()
+		return models.ActionResult{}, ctx.Err()
+	}
+	if actionProvider, ok := p.Provider.(resource.ActionProvider); ok {
+		return actionProvider.Action(ctx, item, name, arguments)
+	}
+	return models.ActionResult{}, resource.ErrUnknownAction
+}
+
+func TestRemoteTimeoutQuarantinesUntilReconnect(t *testing.T) {
+	exampleProvider, err := example.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &flakyRemoteActionProvider{Provider: exampleProvider}
+	core, externalRuntime, registry, socket, definition := startProviderPair(t, provider, resource.WithOperationTimeout(30*time.Millisecond))
+	defer closeProviderPair(core, externalRuntime, registry)
+	client := startProviderClient(t, socket, definition, externalRuntime)
+	defer client.stop(t)
+	waitManifest(t, core)
+	if _, err := core.Put("example", "Endpoint", "recover", models.Resource{APIVersion: "example.ks-tool.dev/v1", Spec: json.RawMessage(`{"title":"Recover","address":"192.0.2.1"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	waitRemoteStatus(t, core, "recover", models.ResourceReady)
+	if _, err := core.Action(context.Background(), "example", "Endpoint", "recover", "inspect", json.RawMessage(`{}`)); err == nil {
+		t.Fatal("blocked provider action unexpectedly succeeded")
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if len(core.Manifest().ProviderErrors["example"]) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(core.Manifest().ProviderErrors["example"]) == 0 {
+		t.Fatal("timed out provider session was not quarantined")
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		result, err := core.Action(context.Background(), "example", "Endpoint", "recover", "inspect", json.RawMessage(`{}`))
+		if err == nil && result.Type == models.ActionResultJSON {
+			if len(core.Manifest().ProviderErrors["example"]) > 0 {
+				t.Fatalf("provider error survived reconnect: %+v", core.Manifest().ProviderErrors)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("provider action did not recover after reconnect")
+}
+
+func TestProviderSessionGenerationRejectsStaleDisconnect(t *testing.T) {
+	provider := &Provider{name: "example"}
+	first := newProviderSession(nil)
+	second := newProviderSession(nil)
+	definition := models.ProviderDefinition{Name: "example", Version: "1"}
+	if err := provider.connect(definition, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.connect(definition, second); err != nil {
+		t.Fatal(err)
+	}
+	if provider.disconnect(first) {
+		t.Fatal("stale session disconnected the replacement")
+	}
+	if !provider.disconnect(second) {
+		t.Fatal("current session was not disconnected")
+	}
+}
+
+func TestRegistryRejectsProtocolV1(t *testing.T) {
+	definition := models.ProviderDefinition{Name: "example", Version: "1"}
+	config := Config{ProtocolVersion: "v1", Providers: []models.ProviderRegistration{{Provider: definition}}}
+	data, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "providers.conf")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Registrations(path); err == nil {
+		t.Fatal("provider protocol v1 was accepted")
+	}
+}
+
+type blockingSendStream struct {
+	providerv1.ProviderChannel_ConnectServer
+	release chan struct{}
+}
+
+func (s *blockingSendStream) Send(*providerv1.AgentMessage) error {
+	<-s.release
+	return nil
+}
+
+func TestProviderSessionSendHonorsContext(t *testing.T) {
+	stream := &blockingSendStream{release: make(chan struct{})}
+	session := newProviderSession(stream)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	time.AfterFunc(100*time.Millisecond, func() { close(stream.release) })
+	started := time.Now()
+	_, err := session.request(ctx, &providerv1.AgentMessage{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("send error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 80*time.Millisecond {
+		t.Fatalf("send ignored context: %v", elapsed)
+	}
 }

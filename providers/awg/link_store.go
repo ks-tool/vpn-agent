@@ -29,6 +29,7 @@ import (
 
 type linkState struct {
 	LinkID        string              `json:"linkId,omitempty"`
+	Generation    int64               `json:"generation,omitempty"`
 	Interface     string              `json:"interface"`
 	Role          string              `json:"role"`
 	PeerPublicKey string              `json:"peerPublicKey"`

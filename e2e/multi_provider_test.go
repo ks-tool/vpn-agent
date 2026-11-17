@@ -250,7 +250,7 @@ func startProviderAgent(ctx context.Context, t *testing.T, netName, alias string
 			{Reader: strings.NewReader(tlsMaterial.Server.Certificate), ContainerFilePath: "/tls/server.pem", FileMode: 0o600},
 			{Reader: strings.NewReader(tlsMaterial.Server.PrivateKey), ContainerFilePath: "/tls/server-key.pem", FileMode: 0o600},
 		},
-		WaitingFor: wait.ForHTTP("/v1/manifest").WithPort("8080/tcp").WithTLS(true, clientTLS).WithStartupTimeout(180 * time.Second),
+		WaitingFor: wait.ForHTTP("/v2/manifest").WithPort("8080/tcp").WithTLS(true, clientTLS).WithStartupTimeout(180 * time.Second),
 		HostConfigModifier: func(hc *container.HostConfig) {
 			hc.CapAdd = append(hc.CapAdd, "NET_ADMIN", "NET_RAW")
 			hc.Sysctls = map[string]string{"net.ipv4.ip_forward": "1"}

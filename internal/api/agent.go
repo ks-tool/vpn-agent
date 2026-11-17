@@ -36,7 +36,7 @@ type agentHandler struct {
 func NewAgent(hostInfo models.HostInfo, runtime *resource.Runtime, system *metrics.Collector, mws ...mux.Middleware) (http.Handler, error) {
 	h := &agentHandler{system: system}
 	router := mux.NewServeMux()
-	router.Handle("/v1/", NewResourceHandler(runtime, mws...))
+	router.Handle("/v2/", NewResourceHandler(runtime, mws...))
 	router.GET("/info", func(w http.ResponseWriter, _ *http.Request) { encode(w, hostInfo) })
 	router.GET("/metrics", h.systemMetrics)
 	router.GET("/metrics/history", h.systemMetricsHistory)

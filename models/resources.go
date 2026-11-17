@@ -18,10 +18,11 @@ package models
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
-const ProtocolVersion = "v1"
+const ProtocolVersion = "v2"
 
 type Resource struct {
 	ID         string          `json:"id"`
@@ -35,13 +36,14 @@ type Resource struct {
 }
 
 type ResourceDefinition struct {
-	APIVersion string             `json:"apiVersion"`
-	Kind       string             `json:"kind"`
-	SpecSchema json.RawMessage    `json:"specSchema"`
-	UISchema   json.RawMessage    `json:"uiSchema,omitempty"`
-	SchemaHash string             `json:"schemaHash"`
-	Ports      []PortDefinition   `json:"ports,omitempty"`
-	Actions    []ActionDefinition `json:"actions,omitempty"`
+	APIVersion     string             `json:"apiVersion"`
+	Kind           string             `json:"kind"`
+	SpecSchema     json.RawMessage    `json:"specSchema"`
+	UISchema       json.RawMessage    `json:"uiSchema,omitempty"`
+	SchemaHash     string             `json:"schemaHash"`
+	ReconcileOrder int                `json:"reconcileOrder,omitempty"`
+	Ports          []PortDefinition   `json:"ports,omitempty"`
+	Actions        []ActionDefinition `json:"actions,omitempty"`
 }
 
 type ResourceStatus struct {
@@ -179,7 +181,18 @@ const (
 )
 
 type LinkOffer struct {
-	LinkID   string          `json:"linkId"`
-	Endpoint LinkEndpoint    `json:"endpoint"`
-	Data     json.RawMessage `json:"data"`
+	LinkID         string          `json:"linkId"`
+	LinkGeneration int64           `json:"linkGeneration"`
+	Endpoint       LinkEndpoint    `json:"endpoint"`
+	Data           json.RawMessage `json:"data"`
+}
+
+func ValidateLinkOffer(link Link, offer LinkOffer) error {
+	if offer.LinkID != link.ID {
+		return fmt.Errorf("link offer %q does not match link %q", offer.LinkID, link.ID)
+	}
+	if offer.LinkGeneration == 0 || offer.LinkGeneration != link.Generation {
+		return fmt.Errorf("stale link offer for generation %d, expected %d", offer.LinkGeneration, link.Generation)
+	}
+	return nil
 }

@@ -98,7 +98,7 @@ func TestProviderResourceLifecycleWithRealCoreProcess(t *testing.T) {
 	defer func() { _ = provider.Close() }()
 	server := httptest.NewServer(api.NewResourceHandler(runtime))
 	defer server.Close()
-	response, err := http.Get(server.URL + "/v1/manifest")
+	response, err := http.Get(server.URL + "/v2/manifest")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,4 +184,42 @@ func waitTestDeletion(t *testing.T, runtime *resource.Runtime, kind, name string
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("resource %s/%s was not deleted", kind, name)
+}
+
+func TestProxyRejectsStaleLinkOffer(t *testing.T) {
+	provider := &Provider{}
+	link := models.Link{ID: "stale-link", Kind: "xray", Generation: 2}
+	offer := models.LinkOffer{LinkID: link.ID, LinkGeneration: 1}
+	if err := provider.CommitLink(context.Background(), link, models.LinkEndpoint{}, offer); err == nil || !strings.Contains(err.Error(), "stale link offer") {
+		t.Fatalf("stale offer error = %v", err)
+	}
+}
+
+func TestProxyRejectsStaleLocalLinkPreparation(t *testing.T) {
+	links, err := newProxyLinkStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &Provider{links: links, adapter: testAdapter{}}
+	link := models.Link{ID: "stale-local", Kind: "test", Generation: 2}
+	local := models.LinkOffer{LinkID: link.ID, LinkGeneration: 1}
+	if err := links.put(link.ID, linkRecord{Role: "source", Offer: local}); err != nil {
+		t.Fatal(err)
+	}
+	remote := models.LinkOffer{LinkID: link.ID, LinkGeneration: 2}
+	if err := provider.CommitLink(context.Background(), link, models.LinkEndpoint{}, remote); err == nil || !strings.Contains(err.Error(), "local link preparation") {
+		t.Fatalf("local preparation error = %v", err)
+	}
+}
+
+func TestProcessApplyHonorsContext(t *testing.T) {
+	manager, err := newProcessManager("/bin/sleep", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := manager.apply(ctx, "resource", CoreConfig{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("process apply error = %v", err)
+	}
 }

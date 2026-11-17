@@ -73,7 +73,10 @@ func Run(version string) {
 		}
 	}
 
-	resourceStore := resource.NewMemoryStore()
+	resourceStore, err := newCoreResourceStore(cfg.DB)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to initialize resource storage")
+	}
 	resourceRuntime := resource.NewRuntime(resourceStore, time.Second, 30*time.Second)
 	defer resourceRuntime.Close()
 
@@ -208,4 +211,8 @@ func defaultAgentDBPath(home string) string {
 		return legacy
 	}
 	return current
+}
+
+func newCoreResourceStore(db string) (resource.Store, error) {
+	return resource.NewPersistentStore(filepath.Join(db, "resources"))
 }

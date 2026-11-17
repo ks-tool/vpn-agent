@@ -35,6 +35,10 @@ type Provider interface {
 	Delete(context.Context, models.Resource) error
 }
 
+type UpdateProvider interface {
+	ValidateUpdate(context.Context, models.Resource, models.Resource) error
+}
+
 type ActionProvider interface {
 	Action(context.Context, models.Resource, string, json.RawMessage) (models.ActionResult, error)
 }

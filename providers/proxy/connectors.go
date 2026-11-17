@@ -17,6 +17,8 @@
 package proxy
 
 import (
+	"context"
+
 	"github.com/ks-tool/vpn-agent/v2/models"
 )
 
@@ -33,11 +35,19 @@ func NewConnectorManager(root string) (*ConnectorManager, error) {
 }
 
 func (m *ConnectorManager) Apply(linkID string, driver models.RouteDriver) error {
-	return m.processes.apply("link:"+linkID, driverCoreConfig(driver))
+	return m.ApplyContext(context.Background(), linkID, driver)
+}
+
+func (m *ConnectorManager) ApplyContext(ctx context.Context, linkID string, driver models.RouteDriver) error {
+	return m.processes.apply(ctx, "link:"+linkID, driverCoreConfig(driver))
 }
 
 func (m *ConnectorManager) Stop(linkID string) error {
-	return m.processes.stop("link:" + linkID)
+	return m.StopContext(context.Background(), linkID)
+}
+
+func (m *ConnectorManager) StopContext(ctx context.Context, linkID string) error {
+	return m.processes.stop(ctx, "link:"+linkID)
 }
 
 func (m *ConnectorManager) Close() error {

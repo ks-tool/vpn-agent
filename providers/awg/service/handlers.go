@@ -17,6 +17,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -79,17 +80,21 @@ func (h *Handler) StopEnabled() {
 // interface (nil for a brand-new one), used by InterfaceUpdate to reconcile
 // hooks on an in-place edit.
 func (h *Handler) One(prev *awgmodels.InterfaceConfig, cfg awgmodels.InterfaceConfig) error {
-	return h.one(prev, cfg, false)
+	return h.OneContext(context.Background(), prev, cfg)
+}
+
+func (h *Handler) OneContext(ctx context.Context, prev *awgmodels.InterfaceConfig, cfg awgmodels.InterfaceConfig) error {
+	return h.one(ctx, prev, cfg, false)
 }
 
 // OneReplacingPeers applies the config with ReplacePeers enabled. This is an
 // explicit disruptive operation for callers that need to rebuild the complete
 // live peer set rather than preserve existing peer sessions.
 func (h *Handler) OneReplacingPeers(prev *awgmodels.InterfaceConfig, cfg awgmodels.InterfaceConfig) error {
-	return h.one(prev, cfg, true)
+	return h.one(context.Background(), prev, cfg, true)
 }
 
-func (h *Handler) one(prev *awgmodels.InterfaceConfig, cfg awgmodels.InterfaceConfig, replacePeers bool) error {
+func (h *Handler) one(ctx context.Context, prev *awgmodels.InterfaceConfig, cfg awgmodels.InterfaceConfig, replacePeers bool) error {
 	logger := log.With().Str("interface", cfg.Interface).Logger()
 
 	// A disabled interface must not be present in the kernel: tear its link down
@@ -99,7 +104,7 @@ func (h *Handler) one(prev *awgmodels.InterfaceConfig, cfg awgmodels.InterfaceCo
 	if cfg.Disabled {
 		if IsInterfaceExist(cfg) {
 			logger.Debug().Str("action", "deactivate").Send()
-			return InterfaceDelete(cfg)
+			return InterfaceDeleteContext(ctx, cfg)
 		}
 		logger.Debug().Str("action", "skip-disabled").Send()
 		return nil
@@ -107,12 +112,12 @@ func (h *Handler) one(prev *awgmodels.InterfaceConfig, cfg awgmodels.InterfaceCo
 
 	if ok := IsInterfaceExist(cfg); ok {
 		logger.Debug().Str("action", "update").Send()
-		if err := InterfaceUpdate(prev, cfg); err != nil {
+		if err := InterfaceUpdateContext(ctx, prev, cfg); err != nil {
 			return fmt.Errorf("update interface %q: %w", cfg.Interface, err)
 		}
 	} else {
 		logger.Debug().Str("action", "create").Send()
-		if err := InterfaceCreate(cfg); err != nil {
+		if err := InterfaceCreateContext(ctx, cfg); err != nil {
 			return fmt.Errorf("create interface %q: %w", cfg.Interface, err)
 		}
 	}
@@ -165,6 +170,10 @@ func reconcilePeers(current []wgtypes.Peer, desired []wgtypes.PeerConfig) []wgty
 }
 
 func (h *Handler) Delete(iface string) error {
+	return h.DeleteContext(context.Background(), iface)
+}
+
+func (h *Handler) DeleteContext(ctx context.Context, iface string) error {
 	logger := log.Debug().Str("interface", iface)
 	logger.Str("action", "delete").Send()
 
@@ -174,9 +183,9 @@ func (h *Handler) Delete(iface string) error {
 	// record removed by hand), tear the interface down anyway, hooklessly.
 	cfg, err := h.store.Get(iface)
 	if err != nil {
-		return InterfaceDelete(awgmodels.InterfaceConfig{Interface: iface})
+		return InterfaceDeleteContext(ctx, awgmodels.InterfaceConfig{Interface: iface})
 	}
-	return InterfaceDelete(*cfg)
+	return InterfaceDeleteContext(ctx, *cfg)
 }
 
 // DetectOrphans returns the name of every live WireGuard interface on the

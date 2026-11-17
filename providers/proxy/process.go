@@ -17,6 +17,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -53,7 +54,10 @@ func newProcessManager(core, root string) (*processManager, error) {
 	return &processManager{core: core, root: root, processes: make(map[string]*coreProcess), startDelay: 200 * time.Millisecond}, nil
 }
 
-func (m *processManager) apply(resourceID string, config CoreConfig) error {
+func (m *processManager) apply(ctx context.Context, resourceID string, config CoreConfig) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	hash := sha256.Sum256(config.Data)
@@ -66,7 +70,7 @@ func (m *processManager) apply(resourceID string, config CoreConfig) error {
 			return nil
 		}
 	}
-	if err := m.stopLocked(resourceID); err != nil {
+	if err := m.stopLocked(ctx, resourceID); err != nil {
 		return err
 	}
 	dir := m.resourceDir(resourceID)
@@ -85,7 +89,7 @@ func (m *processManager) apply(resourceID string, config CoreConfig) error {
 	if len(config.Binary) > 0 {
 		binary = config.Binary
 	}
-	cmd := exec.Command(binary, config.Arguments(configPath)...)
+	cmd := exec.CommandContext(context.WithoutCancel(ctx), binary, config.Arguments(configPath)...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
@@ -100,19 +104,23 @@ func (m *processManager) apply(resourceID string, config CoreConfig) error {
 	select {
 	case err := <-process.done:
 		return fmt.Errorf("core exited during startup: %w; see %s", err, filepath.Join(dir, "core.log"))
+	case <-ctx.Done():
+		_ = process.cmd.Process.Kill()
+		<-process.done
+		return ctx.Err()
 	case <-time.After(m.startDelay):
 	}
 	m.processes[resourceID] = process
 	return nil
 }
 
-func (m *processManager) stop(resourceID string) error {
+func (m *processManager) stop(ctx context.Context, resourceID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.stopLocked(resourceID)
+	return m.stopLocked(ctx, resourceID)
 }
 
-func (m *processManager) stopLocked(resourceID string) error {
+func (m *processManager) stopLocked(ctx context.Context, resourceID string) error {
 	process := m.processes[resourceID]
 	if process == nil {
 		return nil
@@ -132,6 +140,10 @@ func (m *processManager) stopLocked(resourceID string) error {
 	case err := <-process.done:
 		_ = err
 		return nil
+	case <-ctx.Done():
+		_ = process.cmd.Process.Kill()
+		<-process.done
+		return ctx.Err()
 	case <-time.After(5 * time.Second):
 		if err := process.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			return err
@@ -153,7 +165,7 @@ func (m *processManager) close() error {
 	}
 	m.mu.Unlock()
 	for _, id := range ids {
-		if err := m.stop(id); err != nil {
+		if err := m.stop(context.Background(), id); err != nil {
 			return err
 		}
 	}

@@ -30,7 +30,7 @@ import (
 
 func NewWithResources(hostInfo models.HostInfo, store awgstorage.Storage, collector *metrics.Collector, latency *metrics.LatencyCollector, runtime *resource.Runtime, mws ...mux.Middleware) http.Handler {
 	router := mux.NewServeMux()
-	router.Handle("/v1/", agentapi.NewResourceHandler(runtime, mws...))
+	router.Handle("/v2/", agentapi.NewResourceHandler(runtime, mws...))
 	router.Handle("/", New(hostInfo, store, collector, latency, mws...))
 	return router
 }

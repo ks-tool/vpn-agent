@@ -111,7 +111,10 @@ func Run(version string) {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to initialize storage")
 	}
-	resourceStore := resource.NewMemoryStore()
+	resourceStore, err := resource.NewPersistentStore(filepath.Join(cfg.DB, "resources"))
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to initialize resource storage")
+	}
 	if err := loadInterfaces(store); err != nil {
 		log.Fatal().Err(err).Msg("failed to load WireGuard interfaces")
 	}

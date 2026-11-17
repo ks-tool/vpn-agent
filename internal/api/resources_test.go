@@ -66,14 +66,14 @@ func TestResourceAPI(t *testing.T) {
 	server := httptest.NewServer(NewResourceHandler(runtime))
 	defer server.Close()
 
-	response := request(t, http.MethodGet, server.URL+"/v1/manifest", nil)
+	response := request(t, http.MethodGet, server.URL+"/v2/manifest", nil)
 	var manifest models.Manifest
 	decodeResponse(t, response, &manifest)
 	if manifest.ProtocolVersion != models.ProtocolVersion || len(manifest.Providers) != 1 {
 		t.Fatalf("unexpected manifest: %+v", manifest)
 	}
 
-	response = request(t, http.MethodGet, server.URL+"/v1/providers/test/schema", nil)
+	response = request(t, http.MethodGet, server.URL+"/v2/providers/test/schema", nil)
 	var definition models.ProviderDefinition
 	decodeResponse(t, response, &definition)
 	if len(definition.Resources) != 1 || definition.Resources[0].SchemaHash != "hash" {
@@ -81,7 +81,7 @@ func TestResourceAPI(t *testing.T) {
 	}
 
 	body := []byte(`{"apiVersion":"test/v1","kind":"Service","name":"public","spec":{"enabled":true}}`)
-	response = request(t, http.MethodPut, server.URL+"/v1/providers/test/resources/Service/public", body)
+	response = request(t, http.MethodPut, server.URL+"/v2/providers/test/resources/Service/public", body)
 	if response.StatusCode != http.StatusAccepted {
 		t.Fatalf("PUT status: %s", response.Status)
 	}
@@ -94,7 +94,7 @@ func TestResourceAPI(t *testing.T) {
 	var status models.ResourceStatus
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		response = request(t, http.MethodGet, server.URL+"/v1/providers/test/resources/Service/public/status", nil)
+		response = request(t, http.MethodGet, server.URL+"/v2/providers/test/resources/Service/public/status", nil)
 		decodeResponse(t, response, &status)
 		if status.Phase == models.ResourceReady || time.Now().After(deadline) {
 			break
@@ -105,34 +105,34 @@ func TestResourceAPI(t *testing.T) {
 		t.Fatalf("unexpected resource status: %+v", status)
 	}
 
-	response = request(t, http.MethodGet, server.URL+"/v1/providers/test/resources", nil)
+	response = request(t, http.MethodGet, server.URL+"/v2/providers/test/resources", nil)
 	var listed []models.Resource
 	decodeResponse(t, response, &listed)
 	if len(listed) != 1 || string(listed[0].Spec) != `{"enabled":true}` {
 		t.Fatalf("unexpected resource list: %+v", listed)
 	}
 
-	response = request(t, http.MethodPost, server.URL+"/v1/providers/test/resources/Service/public/actions/inspect", []byte(`{"arguments":{"verbose":true}}`))
+	response = request(t, http.MethodPost, server.URL+"/v2/providers/test/resources/Service/public/actions/inspect", []byte(`{"arguments":{"verbose":true}}`))
 	var action models.ActionResult
 	decodeResponse(t, response, &action)
 	if string(action.Data) != `{"verbose":true}` {
 		t.Fatalf("unexpected action response: %+v", action)
 	}
 
-	response = request(t, http.MethodGet, server.URL+"/v1/providers/test/bridge/metrics?view=full", nil)
+	response = request(t, http.MethodGet, server.URL+"/v2/providers/test/bridge/metrics?view=full", nil)
 	var bridged map[string]string
 	decodeResponse(t, response, &bridged)
 	if bridged["path"] != "/metrics?view=full" {
 		t.Fatalf("unexpected bridge path: %+v", bridged)
 	}
 
-	response = request(t, http.MethodDelete, server.URL+"/v1/providers/test/resources/Service/public", nil)
+	response = request(t, http.MethodDelete, server.URL+"/v2/providers/test/resources/Service/public", nil)
 	if response.StatusCode != http.StatusAccepted {
 		t.Fatalf("DELETE status: %s", response.Status)
 	}
 	deadline = time.Now().Add(2 * time.Second)
 	for {
-		response = request(t, http.MethodGet, server.URL+"/v1/providers/test/resources/Service/public/status", nil)
+		response = request(t, http.MethodGet, server.URL+"/v2/providers/test/resources/Service/public/status", nil)
 		_ = response.Body.Close()
 		if response.StatusCode == http.StatusNotFound || time.Now().After(deadline) {
 			break
@@ -167,5 +167,35 @@ func decodeResponse(t *testing.T, response *http.Response, target any) {
 	}
 	if err := json.NewDecoder(response.Body).Decode(target); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestResourceAPIRejectsV1Routes(t *testing.T) {
+	runtime := resource.NewRuntime(resource.NewMemoryStore(), time.Millisecond, time.Hour)
+	server := httptest.NewServer(NewResourceHandler(runtime))
+	defer server.Close()
+	response := request(t, http.MethodGet, server.URL+"/v1/manifest", nil)
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("v1 route status = %s", response.Status)
+	}
+}
+
+func TestResourceAPIReturnsGenerationConflict(t *testing.T) {
+	runtime := resource.NewRuntime(resource.NewMemoryStore(), time.Millisecond, time.Hour)
+	if err := runtime.Register(resourceAPIProvider{}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewResourceHandler(runtime))
+	defer server.Close()
+	path := server.URL + "/v2/providers/test/resources/Service/public"
+	created := []byte(`{"apiVersion":"test/v1","spec":{"revision":1}}`)
+	response := request(t, http.MethodPut, path, created)
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("create status = %s", response.Status)
+	}
+	stale := []byte(`{"apiVersion":"test/v1","generation":0,"spec":{"revision":2}}`)
+	response = request(t, http.MethodPut, path, stale)
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("stale update status = %s", response.Status)
 	}
 }

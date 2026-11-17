@@ -93,7 +93,7 @@ func New(adapter Adapter, version string, resources resource.Store, root, core s
 		Ports: []models.PortDefinition{{Name: "tunnel", Title: "VPN tunnel", LinkKinds: []string{adapter.Name(), models.RouteLinkKind}, RemotePorts: []string{"tunnel"}}},
 	}
 	peerDefinition := models.ResourceDefinition{
-		APIVersion: adapter.APIVersion(), Kind: "Peer", SpecSchema: peerSchema, SchemaHash: schemaHash(peerSchema),
+		APIVersion: adapter.APIVersion(), Kind: "Peer", SpecSchema: peerSchema, SchemaHash: schemaHash(peerSchema), ReconcileOrder: 100,
 		UISchema: json.RawMessage(`{"ui:order":["name","interfaceRef","userRef","publicKey","disabled"]}`),
 		Actions: []models.ActionDefinition{
 			{Name: "renderClientConfig", Title: "Render client connection URI", ArgumentsSchema: clientSchema, ResultType: models.ActionResultFile, TimeoutSeconds: 30},
@@ -141,18 +141,18 @@ func (p *Provider) Validate(_ context.Context, item models.Resource) error {
 	}
 }
 
-func (p *Provider) Reconcile(_ context.Context, item models.Resource) (json.RawMessage, error) {
+func (p *Provider) Reconcile(ctx context.Context, item models.Resource) (json.RawMessage, error) {
 	switch item.Kind {
 	case "Interface":
-		return p.reconcileInterface(item)
+		return p.reconcileInterface(ctx, item)
 	case "Peer":
-		return p.reconcilePeer(item)
+		return p.reconcilePeer(ctx, item)
 	default:
 		return nil, errors.New("unsupported resource kind")
 	}
 }
 
-func (p *Provider) reconcileInterface(item models.Resource) (json.RawMessage, error) {
+func (p *Provider) reconcileInterface(ctx context.Context, item models.Resource) (json.RawMessage, error) {
 	var spec struct {
 		Name     string `json:"name"`
 		Port     int    `json:"port"`
@@ -161,13 +161,13 @@ func (p *Provider) reconcileInterface(item models.Resource) (json.RawMessage, er
 	if err := json.Unmarshal(item.Spec, &spec); err != nil {
 		return nil, err
 	}
-	if err := p.applyInterface(item); err != nil {
+	if err := p.applyInterface(ctx, item); err != nil {
 		return nil, err
 	}
 	return json.Marshal(map[string]any{"name": spec.Name, "port": spec.Port, "active": !spec.Disabled})
 }
 
-func (p *Provider) reconcilePeer(item models.Resource) (json.RawMessage, error) {
+func (p *Provider) reconcilePeer(ctx context.Context, item models.Resource) (json.RawMessage, error) {
 	spec, err := decodePeer(item.Spec)
 	if err != nil {
 		return nil, err
@@ -187,7 +187,7 @@ func (p *Provider) reconcilePeer(item models.Resource) (json.RawMessage, error) 
 	if err != nil {
 		return nil, err
 	}
-	if err := p.applyInterface(interfaceItem); err != nil {
+	if err := p.applyInterface(ctx, interfaceItem); err != nil {
 		return nil, err
 	}
 	if len(spec.PublicKey) == 0 {
@@ -196,7 +196,10 @@ func (p *Provider) reconcilePeer(item models.Resource) (json.RawMessage, error) 
 	return json.Marshal(map[string]any{"interfaceRef": spec.InterfaceRef, "publicKey": spec.PublicKey, "applied": true})
 }
 
-func (p *Provider) applyInterface(interfaceItem models.Resource) error {
+func (p *Provider) applyInterface(ctx context.Context, interfaceItem models.Resource) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	var desired struct {
 		Port     int  `json:"port"`
 		Disabled bool `json:"disabled"`
@@ -205,10 +208,10 @@ func (p *Provider) applyInterface(interfaceItem models.Resource) error {
 		return err
 	}
 	if desired.Disabled {
-		if err := p.processes.stop(interfaceItem.ID); err != nil {
+		if err := p.processes.stop(ctx, interfaceItem.ID); err != nil {
 			return err
 		}
-		return p.firewall.apply(desired.Port, p.adapter.FirewallProtocol(), false)
+		return p.firewall.applyContext(ctx, desired.Port, p.adapter.FirewallProtocol(), false)
 	}
 	peers, err := p.interfacePeers(interfaceItem)
 	if err != nil {
@@ -222,11 +225,11 @@ func (p *Provider) applyInterface(interfaceItem models.Resource) error {
 	if err != nil {
 		return err
 	}
-	if err := p.processes.apply(interfaceItem.ID, config); err != nil {
+	if err := p.processes.apply(ctx, interfaceItem.ID, config); err != nil {
 		return err
 	}
-	if err := p.firewall.apply(desired.Port, p.adapter.FirewallProtocol(), true); err != nil {
-		_ = p.processes.stop(interfaceItem.ID)
+	if err := p.firewall.applyContext(ctx, desired.Port, p.adapter.FirewallProtocol(), true); err != nil {
+		_ = p.processes.stop(ctx, interfaceItem.ID)
 		return err
 	}
 	return nil
@@ -270,10 +273,10 @@ func (p *Provider) interfacePeers(interfaceItem models.Resource) ([]Peer, error)
 	return peers, nil
 }
 
-func (p *Provider) Delete(_ context.Context, item models.Resource) error {
+func (p *Provider) Delete(ctx context.Context, item models.Resource) error {
 	switch item.Kind {
 	case "Interface":
-		if err := p.processes.stop(item.ID); err != nil {
+		if err := p.processes.stop(ctx, item.ID); err != nil {
 			return err
 		}
 		var spec struct {
@@ -282,7 +285,7 @@ func (p *Provider) Delete(_ context.Context, item models.Resource) error {
 		if err := json.Unmarshal(item.Spec, &spec); err != nil {
 			return err
 		}
-		if err := p.firewall.apply(spec.Port, p.adapter.FirewallProtocol(), false); err != nil {
+		if err := p.firewall.applyContext(ctx, spec.Port, p.adapter.FirewallProtocol(), false); err != nil {
 			return err
 		}
 		return osRemoveAll(p.processes.resourceDir(item.ID))
@@ -295,7 +298,7 @@ func (p *Provider) Delete(_ context.Context, item models.Resource) error {
 		if err != nil {
 			return err
 		}
-		if err := p.applyInterface(interfaceItem); err != nil {
+		if err := p.applyInterface(ctx, interfaceItem); err != nil {
 			return err
 		}
 		return p.secrets.delete(item.ID)
@@ -304,7 +307,10 @@ func (p *Provider) Delete(_ context.Context, item models.Resource) error {
 	}
 }
 
-func (p *Provider) Action(_ context.Context, item models.Resource, action string, arguments json.RawMessage) (models.ActionResult, error) {
+func (p *Provider) Action(ctx context.Context, item models.Resource, action string, arguments json.RawMessage) (models.ActionResult, error) {
+	if err := ctx.Err(); err != nil {
+		return models.ActionResult{}, err
+	}
 	if item.Kind != "Peer" {
 		return models.ActionResult{}, errors.New("actions are supported only for peers")
 	}

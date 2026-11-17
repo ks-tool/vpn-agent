@@ -56,3 +56,17 @@ func TestDefaultAgentDBPathPreservesLegacyInstallation(t *testing.T) {
 		t.Fatalf("current agent directory did not take precedence: %q", got)
 	}
 }
+
+func TestNewCoreRuntimeRejectsCorruptStore(t *testing.T) {
+	root := t.TempDir()
+	resources := filepath.Join(root, "resources")
+	if err := os.MkdirAll(resources, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(resources, "corrupt.resource"), []byte(`{"broken"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newCoreResourceStore(root); err == nil {
+		t.Fatal("agent accepted corrupt desired state")
+	}
+}

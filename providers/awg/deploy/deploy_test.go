@@ -19,30 +19,34 @@ package providerdeploy
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
+	"uuid"
 
-	packcmd "github.com/horchestra/pack/cmd"
+	packapply "github.com/horchestra/pack/pkg/apply"
 	"github.com/horchestra/pack/pkg/plan"
+	"github.com/horchestra/pack/pkg/render"
+	"github.com/horchestra/pack/pkg/target"
 	"github.com/horchestra/pack/sdk"
 	"github.com/horchestra/pack/sdk/packschema"
 	"github.com/ks-tool/vpn-agent/v2/models"
 )
 
 func TestApplyLocalPackUsesStatelessInProcessTarget(t *testing.T) {
-	original := embeddedLocalPackApply
-	t.Cleanup(func() { embeddedLocalPackApply = original })
+	original := embeddedLocalApply
+	t.Cleanup(func() { embeddedLocalApply = original })
 	component, values, err := New(models.ProviderDeployment{Name: "awg"}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	calls := 0
-	embeddedLocalPackApply = func(_ context.Context, options packcmd.ApplyOptions) error {
+	embeddedLocalApply = func(_ context.Context, options packapply.LocalOptions) error {
 		calls++
-		if options.Refresh {
-			t.Fatal("local apply tried to download a target")
-		}
 		if options.Pack != component || options.Values["registrationPath"] != values["registrationPath"] {
 			t.Fatal("pack and values were not passed in memory")
 		}
@@ -103,10 +107,10 @@ func (p *localApplyTestPack) PackRoot() packschema.Root {
 }
 
 func TestApplyLocalPackSkipsUnchangedInstallation(t *testing.T) {
-	original := embeddedLocalPackApply
-	t.Cleanup(func() { embeddedLocalPackApply = original })
+	original := embeddedLocalApply
+	t.Cleanup(func() { embeddedLocalApply = original })
 	var plans []*plan.Plan
-	embeddedLocalPackApply = func(ctx context.Context, options packcmd.ApplyOptions) error {
+	embeddedLocalApply = func(ctx context.Context, options packapply.LocalOptions) error {
 		planned := options.Planned
 		options.Planned = func(p *plan.Plan) {
 			plans = append(plans, p)
@@ -151,6 +155,109 @@ func TestApplyLocalPackSkipsUnchangedInstallation(t *testing.T) {
 	content, err = os.ReadFile(path)
 	if err != nil || string(content) != "configured\n" {
 		t.Fatalf("missing file was not restored: %q, %v", content, err)
+	}
+}
+
+type deployTestTarget struct{ closed bool }
+
+func (*deployTestTarget) Namespace() string { return "test" }
+func (*deployTestTarget) Resolve(key string, _ render.Placement) (*render.Resolved, error) {
+	return &render.Resolved{Service: key}, nil
+}
+func (*deployTestTarget) Execute(context.Context, target.Step, func(string)) error { return nil }
+func (t *deployTestTarget) Close() error {
+	t.closed = true
+	return nil
+}
+
+func TestApplyLocalPackUsesReleaseInstallation(t *testing.T) {
+	oldOpen := openLocalTarget
+	oldApply := embeddedLocalApply
+	t.Cleanup(func() {
+		openLocalTarget = oldOpen
+		embeddedLocalApply = oldApply
+	})
+
+	installation := &deployTestTarget{}
+	var targetName, targetID string
+	var targetSettings map[string]string
+	openLocalTarget = func(name, id string, settings map[string]string) (target.Installation, error) {
+		targetName, targetID = name, id
+		targetSettings = maps.Clone(settings)
+		return installation, nil
+	}
+	var got packapply.LocalOptions
+	embeddedLocalApply = func(_ context.Context, options packapply.LocalOptions) error {
+		got = options
+		return nil
+	}
+
+	component, values, err := New(models.ProviderDeployment{Name: "awg"}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := applyLocalPack(context.Background(), component, values, dir); err != nil {
+		t.Fatal(err)
+	}
+	if targetName != "host" {
+		t.Fatalf("target name = %q", targetName)
+	}
+	if _, err := uuid.Parse(targetID); err != nil {
+		t.Fatalf("target installation ID = %q: %v", targetID, err)
+	}
+	if targetSettings[target.SettingPackState] != "observe" || targetSettings["history_count"] != "3" {
+		t.Fatalf("target settings = %#v", targetSettings)
+	}
+	if got.Dir != dir || got.InstallationID != targetID || got.Pack != component || !reflect.DeepEqual(got.Values, values) || got.Target != installation {
+		t.Fatalf("local apply received different inputs: %#v", got)
+	}
+	if !installation.closed {
+		t.Fatal("the local target was not closed")
+	}
+
+	releaseRaw, err := os.ReadFile(filepath.Join(dir, "release.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var releaseDoc map[string]any
+	if err := json.Unmarshal(releaseRaw, &releaseDoc); err != nil {
+		t.Fatal(err)
+	}
+	if releaseDoc["state"] != "observe" || releaseDoc["id"] != targetID {
+		t.Fatalf("release installation differs from target: %#v, target %q", releaseDoc, targetID)
+	}
+	envRaw, err := os.ReadFile(filepath.Join(dir, "env.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envDoc map[string]any
+	if err := json.Unmarshal(envRaw, &envDoc); err != nil {
+		t.Fatal(err)
+	}
+	if envDoc["target"] != "host" || envDoc["history_count"] != float64(3) {
+		t.Fatalf("environment changed: %#v", envDoc)
+	}
+
+	if got.Planned == nil {
+		t.Fatal("the plan callback is missing")
+	}
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	got.Planned(&plan.Plan{Pack: "awg", To: "2.0.0"})
+	_ = w.Close()
+	os.Stdout = oldStdout
+	output, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = r.Close()
+	if !strings.HasPrefix(string(output), "pack plan:\n") {
+		t.Fatalf("plan output = %q", output)
 	}
 }
 

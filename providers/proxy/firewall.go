@@ -17,6 +17,7 @@
 package proxy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -33,12 +34,20 @@ type firewallSystem interface {
 type execFirewallSystem struct{}
 
 func (execFirewallSystem) Output(name string, args ...string) (string, error) {
-	output, err := exec.Command(name, args...).CombinedOutput()
+	return execFirewallSystem{}.OutputContext(context.Background(), name, args...)
+}
+
+func (execFirewallSystem) OutputContext(ctx context.Context, name string, args ...string) (string, error) {
+	output, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 	return string(output), err
 }
 
 func (execFirewallSystem) Run(name string, args ...string) error {
-	output, err := exec.Command(name, args...).CombinedOutput()
+	return execFirewallSystem{}.RunContext(context.Background(), name, args...)
+}
+
+func (execFirewallSystem) RunContext(ctx context.Context, name string, args ...string) error {
+	output, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
@@ -49,11 +58,34 @@ type listenerFirewall struct {
 	system firewallSystem
 }
 
+type contextFirewallSystem interface {
+	OutputContext(context.Context, string, ...string) (string, error)
+	RunContext(context.Context, string, ...string) error
+}
+
+func (f *listenerFirewall) output(ctx context.Context, name string, args ...string) (string, error) {
+	if system, ok := f.system.(contextFirewallSystem); ok {
+		return system.OutputContext(ctx, name, args...)
+	}
+	return f.system.Output(name, args...)
+}
+
+func (f *listenerFirewall) run(ctx context.Context, name string, args ...string) error {
+	if system, ok := f.system.(contextFirewallSystem); ok {
+		return system.RunContext(ctx, name, args...)
+	}
+	return f.system.Run(name, args...)
+}
+
 func newListenerFirewall() *listenerFirewall {
 	return &listenerFirewall{system: execFirewallSystem{}}
 }
 
 func (f *listenerFirewall) apply(port int, protocol string, add bool) error {
+	return f.applyContext(context.Background(), port, protocol, add)
+}
+
+func (f *listenerFirewall) applyContext(ctx context.Context, port int, protocol string, add bool) error {
 	if port == 0 {
 		return nil
 	}
@@ -61,31 +93,31 @@ func (f *listenerFirewall) apply(port int, protocol string, add bool) error {
 		return errors.New("firewall protocol must be tcp or udp")
 	}
 	backend := "iptables"
-	if _, err := f.system.Output("systemctl", "is-active", "--quiet", "firewalld"); err == nil {
+	if _, err := f.output(ctx, "systemctl", "is-active", "--quiet", "firewalld"); err == nil {
 		backend = "firewalld"
-	} else if _, err := f.system.Output("pgrep", "-x", "firewalld"); err == nil {
+	} else if _, err := f.output(ctx, "pgrep", "-x", "firewalld"); err == nil {
 		backend = "firewalld"
-	} else if output, err := f.system.Output("ufw", "status"); err == nil && strings.Contains(output, "Status: active") {
+	} else if output, err := f.output(ctx, "ufw", "status"); err == nil && strings.Contains(output, "Status: active") {
 		backend = "ufw"
 	}
 	switch backend {
 	case "firewalld":
-		return f.applyFirewalld(port, protocol, add)
+		return f.applyFirewalld(ctx, port, protocol, add)
 	case "ufw":
-		return f.applyUFW(port, protocol, add)
+		return f.applyUFW(ctx, port, protocol, add)
 	default:
-		return f.applyIptables(port, protocol, add)
+		return f.applyIptables(ctx, port, protocol, add)
 	}
 }
 
-func (f *listenerFirewall) applyFirewalld(port int, protocol string, add bool) error {
+func (f *listenerFirewall) applyFirewalld(ctx context.Context, port int, protocol string, add bool) error {
 	value := strconv.Itoa(port) + "/" + protocol
 	for _, permanent := range []bool{false, true} {
 		prefix := []string{}
 		if permanent {
 			prefix = append(prefix, "--permanent")
 		}
-		_, queryErr := f.system.Output("firewall-cmd", append(append([]string{}, prefix...), "--query-port="+value)...)
+		_, queryErr := f.output(ctx, "firewall-cmd", append(append([]string{}, prefix...), "--query-port="+value)...)
 		if add == (queryErr == nil) {
 			continue
 		}
@@ -93,45 +125,45 @@ func (f *listenerFirewall) applyFirewalld(port int, protocol string, add bool) e
 		if add {
 			option = "--add-port="
 		}
-		if err := f.system.Run("firewall-cmd", append(append([]string{}, prefix...), option+value)...); err != nil {
+		if err := f.run(ctx, "firewall-cmd", append(append([]string{}, prefix...), option+value)...); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (f *listenerFirewall) applyUFW(port int, protocol string, add bool) error {
+func (f *listenerFirewall) applyUFW(ctx context.Context, port int, protocol string, add bool) error {
 	if add {
-		return f.system.Run("ufw", "allow", strconv.Itoa(port)+"/"+protocol)
+		return f.run(ctx, "ufw", "allow", strconv.Itoa(port)+"/"+protocol)
 	}
-	return f.system.Run("ufw", "delete", "allow", strconv.Itoa(port)+"/"+protocol)
+	return f.run(ctx, "ufw", "delete", "allow", strconv.Itoa(port)+"/"+protocol)
 }
 
-func (f *listenerFirewall) applyIptables(port int, protocol string, add bool) error {
+func (f *listenerFirewall) applyIptables(ctx context.Context, port int, protocol string, add bool) error {
 	rule := []string{"-p", protocol, "--dport", strconv.Itoa(port), "-j", "ACCEPT"}
 	if add {
-		changed, err := f.applyIptablesInputRule(rule)
+		changed, err := f.applyIptablesInputRule(ctx, rule)
 		if err != nil || !changed {
 			return err
 		}
 	} else {
 		check := append([]string{"-C", "INPUT"}, rule...)
-		if err := f.system.Run("iptables", check...); err != nil {
+		if err := f.run(ctx, "iptables", check...); err != nil {
 			return nil
 		}
 		command := append([]string{"-D", "INPUT"}, rule...)
-		if err := f.system.Run("iptables", command...); err != nil {
+		if err := f.run(ctx, "iptables", command...); err != nil {
 			return err
 		}
 	}
 	if _, err := exec.LookPath("netfilter-persistent"); err != nil {
 		return nil
 	}
-	return f.system.Run("netfilter-persistent", "save")
+	return f.run(ctx, "netfilter-persistent", "save")
 }
 
-func (f *listenerFirewall) applyIptablesInputRule(rule []string) (bool, error) {
-	output, err := f.system.Output("iptables", "-S", "INPUT")
+func (f *listenerFirewall) applyIptablesInputRule(ctx context.Context, rule []string) (bool, error) {
+	output, err := f.output(ctx, "iptables", "-S", "INPUT")
 	if err != nil {
 		return false, err
 	}
@@ -156,7 +188,7 @@ func (f *listenerFirewall) applyIptablesInputRule(rule []string) (bool, error) {
 	}
 	if rulePosition > 0 {
 		command := append([]string{"-D", "INPUT"}, rule...)
-		if err := f.system.Run("iptables", command...); err != nil {
+		if err := f.run(ctx, "iptables", command...); err != nil {
 			return false, err
 		}
 	}
@@ -165,7 +197,7 @@ func (f *listenerFirewall) applyIptablesInputRule(rule []string) (bool, error) {
 		command = []string{"-I", "INPUT", strconv.Itoa(rejectPosition)}
 	}
 	command = append(command, rule...)
-	if err := f.system.Run("iptables", command...); err != nil {
+	if err := f.run(ctx, "iptables", command...); err != nil {
 		return false, err
 	}
 	return true, nil

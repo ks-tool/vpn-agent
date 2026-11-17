@@ -42,7 +42,7 @@ type linkSide struct {
 	key      awgmodels.Key
 }
 
-func TestDistributedLinkPrepareCommitRetryAndDelete(t *testing.T) {
+func TestLinkCommitRetryKeepsArtifacts(t *testing.T) {
 	source := newLinkSide(t, "source-server", "source-resource", "192.0.2.1", true)
 	target := newLinkSide(t, "target-server", "target-resource", "192.0.2.2", false)
 	link := models.Link{ID: "link-id", Kind: "awg", Generation: 1, Source: source.endpoint, Target: target.endpoint}
@@ -292,7 +292,7 @@ func TestDistributedRouteLinkPreparePreservesCommittedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := target.provider.CommitLink(context.Background(), link, target.endpoint, models.LinkOffer{}); err != nil {
+	if err := target.provider.CommitLink(context.Background(), link, target.endpoint, firstOffer); err != nil {
 		t.Fatal(err)
 	}
 	committedTarget, err := target.provider.links.get(link.ID)
@@ -375,5 +375,44 @@ func TestDistributedLinkReallocatesCollidingRouteTable(t *testing.T) {
 	}
 	if config.Table == collision {
 		t.Fatalf("colliding routing table %d was not reallocated", collision)
+	}
+}
+
+func TestAWGRejectsStaleLinkOffer(t *testing.T) {
+	source := newLinkSide(t, "source-server", "source-resource", "192.0.2.1", true)
+	target := newLinkSide(t, "target-server", "target-resource", "192.0.2.2", false)
+	link := models.Link{ID: "stale-link", Kind: "awg", Generation: 1, Source: source.endpoint, Target: target.endpoint}
+	offer, err := target.provider.PrepareLink(context.Background(), link, target.endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := source.store.Get("awg0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	link.Generation = 2
+	if err := source.provider.CommitLink(context.Background(), link, source.endpoint, offer); err == nil || !strings.Contains(err.Error(), "stale link offer") {
+		t.Fatalf("stale offer error = %v", err)
+	}
+	after, err := source.store.Get("awg0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Peers) != len(before.Peers) || after.Table != before.Table {
+		t.Fatalf("stale offer changed interface: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestAWGRejectsStaleLocalLinkPreparation(t *testing.T) {
+	source := newLinkSide(t, "source-server", "source-resource", "192.0.2.1", true)
+	target := newLinkSide(t, "target-server", "target-resource", "192.0.2.2", false)
+	link := models.Link{ID: "stale-route-local", Kind: models.RouteLinkKind, Generation: 1, Source: source.endpoint, Target: target.endpoint}
+	if _, err := source.provider.PrepareLink(context.Background(), link, source.endpoint); err != nil {
+		t.Fatal(err)
+	}
+	link.Generation = 2
+	remote := models.LinkOffer{LinkID: link.ID, LinkGeneration: 2, Data: json.RawMessage(`{}`)}
+	if err := source.provider.CommitLink(context.Background(), link, source.endpoint, remote); err == nil || !strings.Contains(err.Error(), "local link preparation") {
+		t.Fatalf("local preparation error = %v", err)
 	}
 }

@@ -17,6 +17,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -31,6 +32,10 @@ import (
 )
 
 func InterfaceCreate(cfg awgmodels.InterfaceConfig) error {
+	return InterfaceCreateContext(context.Background(), cfg)
+}
+
+func InterfaceCreateContext(ctx context.Context, cfg awgmodels.InterfaceConfig) error {
 	if err := backend.Add(cfg.Interface, cfg.IsAmnezia()); err != nil {
 		return err
 	}
@@ -59,10 +64,10 @@ func InterfaceCreate(cfg awgmodels.InterfaceConfig) error {
 	// through Create on an agent restart. There are no peers on the device yet
 	// (ConfigureDevice runs after this returns), so no traffic flows before the
 	// PreUp firewall/routing rules are in place.
-	if err := runHooks(cfg.Interface, "PreUp", cfg.PreUp); err != nil {
+	if err := runHooksContext(ctx, cfg.Interface, "PreUp", cfg.PreUp); err != nil {
 		return err
 	}
-	return runHooks(cfg.Interface, "PostUp", cfg.PostUp)
+	return runHooksContext(ctx, cfg.Interface, "PostUp", cfg.PostUp)
 }
 
 // InterfaceUpdate reconfigures an already-existing link in place and reconciles
@@ -73,15 +78,19 @@ func InterfaceCreate(cfg awgmodels.InterfaceConfig) error {
 // re-apply, in which case the new up-hooks run without teardown. Teardown is
 // best-effort so a rule that's already gone doesn't block the update.
 func InterfaceUpdate(prev *awgmodels.InterfaceConfig, cfg awgmodels.InterfaceConfig) error {
+	return InterfaceUpdateContext(context.Background(), prev, cfg)
+}
+
+func InterfaceUpdateContext(ctx context.Context, prev *awgmodels.InterfaceConfig, cfg awgmodels.InterfaceConfig) error {
 	upHooksChanged := prev == nil ||
 		!slices.Equal(prev.PreUp, cfg.PreUp) ||
 		!slices.Equal(prev.PostUp, cfg.PostUp)
 
 	if prev != nil && upHooksChanged {
-		if err := runHooks(cfg.Interface, "PreDown", prev.PreDown); err != nil {
+		if err := runHooksContext(ctx, cfg.Interface, "PreDown", prev.PreDown); err != nil {
 			log.Warn().Err(err).Str("interface", cfg.Interface).Msg("reconcile PreDown hook failed, continuing")
 		}
-		if err := runHooks(cfg.Interface, "PostDown", prev.PostDown); err != nil {
+		if err := runHooksContext(ctx, cfg.Interface, "PostDown", prev.PostDown); err != nil {
 			log.Warn().Err(err).Str("interface", cfg.Interface).Msg("reconcile PostDown hook failed, continuing")
 		}
 	}
@@ -102,10 +111,10 @@ func InterfaceUpdate(prev *awgmodels.InterfaceConfig, cfg awgmodels.InterfaceCon
 	}
 
 	if upHooksChanged {
-		if err := runHooks(cfg.Interface, "PreUp", cfg.PreUp); err != nil {
+		if err := runHooksContext(ctx, cfg.Interface, "PreUp", cfg.PreUp); err != nil {
 			return err
 		}
-		return runHooks(cfg.Interface, "PostUp", cfg.PostUp)
+		return runHooksContext(ctx, cfg.Interface, "PostUp", cfg.PostUp)
 	}
 	return nil
 }
@@ -120,17 +129,21 @@ func InterfaceUpdate(prev *awgmodels.InterfaceConfig, cfg awgmodels.InterfaceCon
 // PreUp/PostUp (which abort on failure), are best-effort: removing the link is
 // the whole point here, so a failing hook is logged and teardown continues.
 func InterfaceDelete(cfg awgmodels.InterfaceConfig) error {
+	return InterfaceDeleteContext(context.Background(), cfg)
+}
+
+func InterfaceDeleteContext(ctx context.Context, cfg awgmodels.InterfaceConfig) error {
 	if !backend.Exists(cfg.Interface) {
 		return nil
 	}
 
-	if err := runHooks(cfg.Interface, "PreDown", cfg.PreDown); err != nil {
+	if err := runHooksContext(ctx, cfg.Interface, "PreDown", cfg.PreDown); err != nil {
 		log.Warn().Err(err).Str("interface", cfg.Interface).Msg("PreDown hook failed, continuing teardown")
 	}
 	if err := backend.Down(cfg.Interface); err != nil {
 		return err
 	}
-	if err := runHooks(cfg.Interface, "PostDown", cfg.PostDown); err != nil {
+	if err := runHooksContext(ctx, cfg.Interface, "PostDown", cfg.PostDown); err != nil {
 		log.Warn().Err(err).Str("interface", cfg.Interface).Msg("PostDown hook failed, continuing teardown")
 	}
 
@@ -144,11 +157,18 @@ func InterfaceDelete(cfg awgmodels.InterfaceConfig) error {
 // "iptables -A FORWARD -i %i -j ACCEPT"). It stops at the first failing
 // command and returns its error with the command's combined output attached.
 func runHooks(iface, phase string, cmds []string) error {
+	return runHooksContext(context.Background(), iface, phase, cmds)
+}
+
+func runHooksContext(ctx context.Context, iface, phase string, cmds []string) error {
 	for _, raw := range cmds {
 		cmd := strings.ReplaceAll(raw, "%i", iface)
-		out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
+		out, err := exec.CommandContext(ctx, "sh", "-c", cmd).CombinedOutput()
 		output := strings.TrimSpace(string(out))
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return fmt.Errorf("%s hook: %w", phase, ctxErr)
+			}
 			return fmt.Errorf("%s hook %q: %w: %s", phase, cmd, err, output)
 		}
 		log.Debug().Str("interface", iface).Str("phase", phase).

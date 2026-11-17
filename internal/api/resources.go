@@ -31,18 +31,18 @@ import (
 func NewResourceHandler(runtime *resource.Runtime, mws ...mux.Middleware) http.Handler {
 	h := &resourceHandler{runtime: runtime}
 	router := mux.NewServeMux(mws...)
-	router.GET("/v1/manifest", h.manifest)
-	router.GET("/v1/providers/{provider}/schema", h.schema)
-	router.GET("/v1/providers/{provider}/resources", h.list)
-	router.PUT("/v1/providers/{provider}/resources/{kind}/{name}", h.put)
-	router.DELETE("/v1/providers/{provider}/resources/{kind}/{name}", h.delete)
-	router.GET("/v1/providers/{provider}/resources/{kind}/{name}/status", h.status)
-	router.POST("/v1/providers/{provider}/resources/{kind}/{name}/actions/{action}", h.action)
-	router.POST("/v1/providers/{provider}/links/prepare", h.prepareLink)
-	router.POST("/v1/providers/{provider}/links/commit", h.commitLink)
-	router.POST("/v1/providers/{provider}/links/delete", h.deleteLink)
-	router.Handle("/v1/providers/{provider}/bridge/{path...}", http.HandlerFunc(h.bridge))
-	router.GET("/v1/events", h.events)
+	router.GET("/v2/manifest", h.manifest)
+	router.GET("/v2/providers/{provider}/schema", h.schema)
+	router.GET("/v2/providers/{provider}/resources", h.list)
+	router.PUT("/v2/providers/{provider}/resources/{kind}/{name}", h.put)
+	router.DELETE("/v2/providers/{provider}/resources/{kind}/{name}", h.delete)
+	router.GET("/v2/providers/{provider}/resources/{kind}/{name}/status", h.status)
+	router.POST("/v2/providers/{provider}/resources/{kind}/{name}/actions/{action}", h.action)
+	router.POST("/v2/providers/{provider}/links/prepare", h.prepareLink)
+	router.POST("/v2/providers/{provider}/links/commit", h.commitLink)
+	router.POST("/v2/providers/{provider}/links/delete", h.deleteLink)
+	router.Handle("/v2/providers/{provider}/bridge/{path...}", http.HandlerFunc(h.bridge))
+	router.GET("/v2/events", h.events)
 	return router
 }
 
@@ -170,6 +170,8 @@ func (h *resourceHandler) events(w http.ResponseWriter, r *http.Request) {
 func resourceError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	switch {
+	case errors.Is(err, resource.ErrGenerationConflict):
+		status = http.StatusConflict
 	case storage.IsNotFound(err), errors.Is(err, resource.ErrUnknownProvider), errors.Is(err, resource.ErrUnknownResource), errors.Is(err, resource.ErrUnknownAction):
 		status = http.StatusNotFound
 	}

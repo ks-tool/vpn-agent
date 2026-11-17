@@ -201,25 +201,51 @@ func (r *Registry) Connect(stream providerv1.ProviderChannel_ConnectServer) erro
 			log.Warn().Str("provider", definition.Name).Msg("provider disconnected")
 		}
 	}()
+	messages := make(chan *providerv1.ProviderMessage)
+	receiveErrors := make(chan error, 1)
+	go func() {
+		for {
+			message, err := stream.Recv()
+			if err != nil {
+				select {
+				case receiveErrors <- err:
+				case <-stream.Context().Done():
+				}
+				return
+			}
+			select {
+			case messages <- message:
+			case <-stream.Context().Done():
+				return
+			}
+		}
+	}()
 	for {
-		message, err := stream.Recv()
-		if err != nil {
+		select {
+		case <-session.done:
+			return errors.New("provider session closed")
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		case err := <-receiveErrors:
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			return err
-		}
-		switch value := message.Message.(type) {
-		case *providerv1.ProviderMessage_Response:
-			session.deliver(value.Response)
-		case *providerv1.ProviderMessage_Event:
-			select {
-			case events <- value.Event:
-			case <-stream.Context().Done():
-				return stream.Context().Err()
+		case message := <-messages:
+			switch value := message.Message.(type) {
+			case *providerv1.ProviderMessage_Response:
+				session.deliver(value.Response)
+			case *providerv1.ProviderMessage_Event:
+				select {
+				case events <- value.Event:
+				case <-stream.Context().Done():
+					return stream.Context().Err()
+				case <-session.done:
+					return errors.New("provider session closed")
+				}
+			default:
+				return status.Error(codes.InvalidArgument, "unexpected provider message")
 			}
-		default:
-			return status.Error(codes.InvalidArgument, "unexpected provider message")
 		}
 	}
 }

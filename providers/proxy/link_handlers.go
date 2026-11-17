@@ -20,13 +20,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 
 	"github.com/ks-tool/vpn-agent/v2/models"
 )
 
-func (p *Provider) PrepareLink(_ context.Context, link models.Link, endpoint models.LinkEndpoint) (models.LinkOffer, error) {
+func (p *Provider) PrepareLink(ctx context.Context, link models.Link, endpoint models.LinkEndpoint) (models.LinkOffer, error) {
+	if err := ctx.Err(); err != nil {
+		return models.LinkOffer{}, err
+	}
 	if err := p.validateLinkKind(link.Kind); err != nil {
 		return models.LinkOffer{}, err
 	}
@@ -34,7 +38,7 @@ func (p *Provider) PrepareLink(_ context.Context, link models.Link, endpoint mod
 	if err != nil {
 		return models.LinkOffer{}, err
 	}
-	offer := models.LinkOffer{LinkID: link.ID, Endpoint: endpoint, Data: json.RawMessage(`{}`)}
+	offer := models.LinkOffer{LinkID: link.ID, LinkGeneration: link.Generation, Endpoint: endpoint, Data: json.RawMessage(`{}`)}
 	if link.Target.ResourceID == endpoint.ResourceID && link.Target.ServerID == endpoint.ServerID {
 		adapter, ok := p.adapter.(LinkAdapter)
 		if !ok {
@@ -92,7 +96,10 @@ func (p *Provider) PrepareLink(_ context.Context, link models.Link, endpoint mod
 	return offer, p.links.put(link.ID, linkRecord{Role: "source", Offer: offer})
 }
 
-func (p *Provider) CommitLink(_ context.Context, link models.Link, endpoint models.LinkEndpoint, remote models.LinkOffer) error {
+func (p *Provider) CommitLink(ctx context.Context, link models.Link, endpoint models.LinkEndpoint, remote models.LinkOffer) error {
+	if err := models.ValidateLinkOffer(link, remote); err != nil {
+		return err
+	}
 	if err := p.validateLinkKind(link.Kind); err != nil {
 		return err
 	}
@@ -103,8 +110,11 @@ func (p *Provider) CommitLink(_ context.Context, link models.Link, endpoint mode
 	if err != nil {
 		return err
 	}
+	if err := models.ValidateLinkOffer(link, record.Offer); err != nil {
+		return fmt.Errorf("local link preparation: %w", err)
+	}
 	if record.Role == "target" {
-		if err := p.applyInterfaceRecord(record.Offer.Endpoint.ResourceID); err != nil {
+		if err := p.applyInterfaceRecord(ctx, record.Offer.Endpoint.ResourceID); err != nil {
 			return err
 		}
 		return nil
@@ -128,16 +138,21 @@ func (p *Provider) CommitLink(_ context.Context, link models.Link, endpoint mode
 		return errors.New("remote offer has no route connector")
 	}
 	record.Driver = &driver
-	if err := p.processes.apply("link:"+link.ID, driverCoreConfig(driver)); err != nil {
+	if err := p.processes.apply(ctx, "link:"+link.ID, driverCoreConfig(driver)); err != nil {
 		return err
 	}
 	if err := p.links.put(link.ID, record); err != nil {
 		return err
 	}
-	return p.applyInterfaceRecord(endpoint.ResourceID)
+	return p.applyInterfaceRecord(ctx, endpoint.ResourceID)
 }
 
-func (p *Provider) DeleteLink(_ context.Context, link models.Link, _ models.LinkEndpoint, _ *models.LinkOffer) error {
+func (p *Provider) DeleteLink(ctx context.Context, link models.Link, _ models.LinkEndpoint, remote *models.LinkOffer) error {
+	if remote != nil {
+		if err := models.ValidateLinkOffer(link, *remote); err != nil {
+			return err
+		}
+	}
 	record, err := p.links.get(link.ID)
 	if err != nil {
 		if osIsNotExist(err) {
@@ -146,40 +161,41 @@ func (p *Provider) DeleteLink(_ context.Context, link models.Link, _ models.Link
 		return err
 	}
 	if record.Role == "source" {
-		if err := p.processes.stop("link:" + link.ID); err != nil {
+		if err := p.processes.stop(ctx, "link:"+link.ID); err != nil {
 			return err
 		}
 	}
 	if err := p.links.delete(link.ID); err != nil {
 		return err
 	}
-	return p.applyInterfaceRecord(record.Offer.Endpoint.ResourceID)
+	return p.applyInterfaceRecord(ctx, record.Offer.Endpoint.ResourceID)
 }
 
 func (p *Provider) RestoreLinks() error {
+	ctx := context.Background()
 	records, err := p.links.list()
 	if err != nil {
 		return err
 	}
 	for id, record := range records {
 		if record.Role == "source" && record.Driver != nil {
-			if err := p.processes.apply("link:"+id, driverCoreConfig(*record.Driver)); err != nil {
+			if err := p.processes.apply(ctx, "link:"+id, driverCoreConfig(*record.Driver)); err != nil {
 				return err
 			}
 		}
-		if err := p.applyInterfaceRecord(record.Offer.Endpoint.ResourceID); err != nil {
+		if err := p.applyInterfaceRecord(ctx, record.Offer.Endpoint.ResourceID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (p *Provider) applyInterfaceRecord(resourceID string) error {
+func (p *Provider) applyInterfaceRecord(ctx context.Context, resourceID string) error {
 	item, _, err := p.interfaceResource(resourceID)
 	if err != nil {
 		return err
 	}
-	return p.applyInterface(item)
+	return p.applyInterface(ctx, item)
 }
 
 func (p *Provider) validateLinkKind(kind string) error {

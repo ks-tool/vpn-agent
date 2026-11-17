@@ -21,12 +21,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"uuid"
 
-	packcmd "github.com/horchestra/pack/cmd"
+	packapply "github.com/horchestra/pack/pkg/apply"
 	"github.com/horchestra/pack/pkg/plan"
+	"github.com/horchestra/pack/pkg/target"
 	"github.com/horchestra/pack/sdk"
 	"github.com/horchestra/targets/host/local"
 	"github.com/ks-tool/vpn-agent/v2/models"
@@ -35,7 +37,10 @@ import (
 
 const deployStateDir = "/var/lib/vpn-provider-awg/pack"
 
-var embeddedLocalPackApply = packcmd.Apply
+var (
+	embeddedLocalApply = packapply.Local
+	openLocalTarget    = target.Open
+)
 
 func Deploy(ctx context.Context, configPath string) error {
 	data, err := os.ReadFile(configPath)
@@ -61,9 +66,10 @@ func applyLocalPack(ctx context.Context, component sdk.Pack, values map[string]a
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	installationID := uuid.New().String()
 	if err := writeDeployJSON(filepath.Join(dir, "release.yaml"), map[string]any{
 		"state": "observe",
-		"id":    uuid.New().String(),
+		"id":    installationID,
 	}); err != nil {
 		return err
 	}
@@ -76,9 +82,18 @@ func applyLocalPack(ctx context.Context, component sdk.Pack, values map[string]a
 	}); err != nil {
 		return err
 	}
-	return embeddedLocalPackApply(ctx, packcmd.ApplyOptions{
-		Dir: dir, Refresh: false, Pack: component, Values: values,
-		Env: map[string]string{"PACK_JOURNAL": "off"},
+	installation, err := openLocalTarget("host", installationID, map[string]string{
+		target.SettingPackState: "observe",
+		"history_count":         "3",
+	})
+	if err != nil {
+		return err
+	}
+	if closer, ok := installation.(io.Closer); ok {
+		defer func() { _ = closer.Close() }()
+	}
+	return embeddedLocalApply(ctx, packapply.LocalOptions{
+		Dir: dir, InstallationID: installationID, Pack: component, Values: values, Target: installation,
 		Planned: func(p *plan.Plan) {
 			fmt.Printf("pack plan:\n%s\n", p.Text())
 		},

@@ -87,7 +87,7 @@ func newPeerDefinition() (models.ResourceDefinition, *packschemavalidator.Compil
 	emptySchema := json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`)
 	hash := sha256.Sum256(raw)
 	return models.ResourceDefinition{
-		APIVersion: APIVersion, Kind: "Peer", SpecSchema: raw, SchemaHash: "sha256:" + hex.EncodeToString(hash[:]),
+		APIVersion: APIVersion, Kind: "Peer", SpecSchema: raw, SchemaHash: "sha256:" + hex.EncodeToString(hash[:]), ReconcileOrder: 100,
 		UISchema: json.RawMessage(`{"ui:order":["name","interfaceRef","userRef","allowedIPs","dns","disabled","keepaliveSeconds","publicKey"]}`),
 		Actions: []models.ActionDefinition{
 			{Name: "renderClientConfig", Title: "Render client configuration", ArgumentsSchema: clientSchema, ResultType: models.ActionResultFile, TimeoutSeconds: 30},
@@ -164,7 +164,7 @@ func (p *Provider) validatePeer(_ context.Context, item models.Resource) error {
 	return err
 }
 
-func (p *Provider) reconcilePeer(_ context.Context, item models.Resource) (json.RawMessage, error) {
+func (p *Provider) reconcilePeer(ctx context.Context, item models.Resource) (json.RawMessage, error) {
 	spec, err := p.decodePeer(item.Spec)
 	if err != nil {
 		return nil, err
@@ -228,7 +228,7 @@ func (p *Provider) reconcilePeer(_ context.Context, item models.Resource) (json.
 	} else {
 		cfg.Peers = append(cfg.Peers, peer)
 	}
-	if err := p.network.One(old, cfg); err != nil {
+	if err := p.applyNetwork(ctx, old, cfg); err != nil {
 		return nil, err
 	}
 	if err := p.store.Set(&cfg); err != nil {
@@ -251,7 +251,7 @@ func (p *Provider) reconcilePeer(_ context.Context, item models.Resource) (json.
 	})
 }
 
-func (p *Provider) deletePeer(_ context.Context, item models.Resource) error {
+func (p *Provider) deletePeer(ctx context.Context, item models.Resource) error {
 	spec, err := p.decodePeer(item.Spec)
 	if err != nil {
 		return err
@@ -271,7 +271,7 @@ func (p *Provider) deletePeer(_ context.Context, item models.Resource) error {
 			cfg.Peers = append(cfg.Peers, peer)
 		}
 	}
-	if err := p.network.One(old, cfg); err != nil {
+	if err := p.applyNetwork(ctx, old, cfg); err != nil {
 		return err
 	}
 	if err := p.store.Set(&cfg); err != nil {
@@ -280,9 +280,9 @@ func (p *Provider) deletePeer(_ context.Context, item models.Resource) error {
 	return p.secrets.delete(item.ID)
 }
 
-func (p *Provider) Action(_ context.Context, item models.Resource, action string, arguments json.RawMessage) (models.ActionResult, error) {
+func (p *Provider) Action(ctx context.Context, item models.Resource, action string, arguments json.RawMessage) (models.ActionResult, error) {
 	if item.Kind == "Interface" && action == "importSecret" {
-		return p.importInterfaceSecret(item, arguments)
+		return p.importInterfaceSecret(ctx, item, arguments)
 	}
 	if item.Kind != "Peer" {
 		return models.ActionResult{}, errors.New("action is supported only for peers")

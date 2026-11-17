@@ -42,9 +42,9 @@ type awgLinkOffer struct {
 	RoutePeer *awgmodels.InterfacePeer `json:"routePeer,omitempty"`
 }
 
-func (p *Provider) PrepareLink(_ context.Context, link models.Link, endpoint models.LinkEndpoint) (models.LinkOffer, error) {
+func (p *Provider) PrepareLink(ctx context.Context, link models.Link, endpoint models.LinkEndpoint) (models.LinkOffer, error) {
 	if link.Kind == models.RouteLinkKind {
-		return p.prepareRouteLink(context.Background(), link, endpoint)
+		return p.prepareRouteLink(ctx, link, endpoint)
 	}
 	if link.Kind != "awg" {
 		return models.LinkOffer{}, errors.New("unsupported link kind")
@@ -61,12 +61,22 @@ func (p *Provider) PrepareLink(_ context.Context, link models.Link, endpoint mod
 	if err != nil {
 		return models.LinkOffer{}, err
 	}
-	return models.LinkOffer{LinkID: link.ID, Endpoint: endpoint, Data: data}, nil
+	return models.LinkOffer{LinkID: link.ID, LinkGeneration: link.Generation, Endpoint: endpoint, Data: data}, nil
 }
 
-func (p *Provider) CommitLink(_ context.Context, link models.Link, endpoint models.LinkEndpoint, remote models.LinkOffer) error {
+func (p *Provider) CommitLink(ctx context.Context, link models.Link, endpoint models.LinkEndpoint, remote models.LinkOffer) error {
+	if err := models.ValidateLinkOffer(link, remote); err != nil {
+		return err
+	}
 	if link.Kind == models.RouteLinkKind {
-		return p.commitRouteLink(context.Background(), link, endpoint, remote)
+		state, err := p.links.get(link.ID)
+		if err != nil {
+			return err
+		}
+		if state.Generation != link.Generation {
+			return fmt.Errorf("local link preparation has generation %d, expected %d", state.Generation, link.Generation)
+		}
+		return p.commitRouteLink(ctx, link, endpoint, remote)
 	}
 	if link.Kind != "awg" || remote.LinkID != link.ID {
 		return errors.New("link or offer does not match AWG provider")
@@ -129,7 +139,7 @@ func (p *Provider) CommitLink(_ context.Context, link models.Link, endpoint mode
 	}
 	sum := sha256.Sum256([]byte(link.ID))
 	table := proxy.RouteTable(routeID)
-	state := linkState{LinkID: link.ID, Interface: spec.Interface, Role: role, PeerPublicKey: remoteSpec.PublicKey, Table: table, Priority: table}
+	state := linkState{LinkID: link.ID, Generation: link.Generation, Interface: spec.Interface, Role: role, PeerPublicKey: remoteSpec.PublicKey, Table: table, Priority: table}
 	peer := awgmodels.InterfacePeer{Key: remotePublicKey, Endpoint: remoteEndpoint(remote), KeepaliveInterval: 25 * time.Second}
 	if role == "source" {
 		remoteIP, _, err := net.ParseCIDR(remoteSpec.Interface.Address)
@@ -174,7 +184,7 @@ func (p *Provider) CommitLink(_ context.Context, link models.Link, endpoint mode
 	if !replaced {
 		cfg.Peers = append(cfg.Peers, peer)
 	}
-	if err := p.network.One(old, cfg); err != nil {
+	if err := p.applyNetwork(ctx, old, cfg); err != nil {
 		return err
 	}
 	if err := p.store.Set(&cfg); err != nil {
@@ -183,9 +193,14 @@ func (p *Provider) CommitLink(_ context.Context, link models.Link, endpoint mode
 	return p.links.put(link.ID, state)
 }
 
-func (p *Provider) DeleteLink(_ context.Context, link models.Link, endpoint models.LinkEndpoint, remote *models.LinkOffer) error {
+func (p *Provider) DeleteLink(ctx context.Context, link models.Link, endpoint models.LinkEndpoint, remote *models.LinkOffer) error {
+	if remote != nil {
+		if err := models.ValidateLinkOffer(link, *remote); err != nil {
+			return err
+		}
+	}
 	if link.Kind == models.RouteLinkKind {
-		return p.deleteRouteLink(context.Background(), link, endpoint, remote)
+		return p.deleteRouteLink(ctx, link, endpoint, remote)
 	}
 	state, err := p.links.get(link.ID)
 	legacy := false
@@ -223,7 +238,7 @@ func (p *Provider) DeleteLink(_ context.Context, link models.Link, endpoint mode
 	} else {
 		removeLinkArtifacts(&cfg, state)
 	}
-	if err := p.network.One(old, cfg); err != nil {
+	if err := p.applyNetwork(ctx, old, cfg); err != nil {
 		return err
 	}
 	if err := p.store.Set(&cfg); err != nil {

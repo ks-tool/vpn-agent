@@ -124,10 +124,13 @@ func (p *Provider) PrepareLink(_ context.Context, link models.Link, endpoint mod
 		return models.LinkOffer{}, errors.New("unsupported link kind")
 	}
 	data, _ := json.Marshal(map[string]string{"endpoint": endpoint.ResourceID})
-	return models.LinkOffer{LinkID: link.ID, Endpoint: endpoint, Data: data}, nil
+	return models.LinkOffer{LinkID: link.ID, LinkGeneration: link.Generation, Endpoint: endpoint, Data: data}, nil
 }
 
 func (p *Provider) CommitLink(_ context.Context, link models.Link, endpoint models.LinkEndpoint, remote models.LinkOffer) error {
+	if err := models.ValidateLinkOffer(link, remote); err != nil {
+		return err
+	}
 	if link.Kind != "example" || remote.LinkID != link.ID {
 		return errors.New("invalid example link")
 	}

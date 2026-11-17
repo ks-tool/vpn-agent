@@ -48,6 +48,25 @@ type Network interface {
 	Delete(string) error
 }
 
+type contextNetwork interface {
+	OneContext(context.Context, *awgmodels.InterfaceConfig, awgmodels.InterfaceConfig) error
+	DeleteContext(context.Context, string) error
+}
+
+func (p *Provider) applyNetwork(ctx context.Context, previous *awgmodels.InterfaceConfig, config awgmodels.InterfaceConfig) error {
+	if network, ok := p.network.(contextNetwork); ok {
+		return network.OneContext(ctx, previous, config)
+	}
+	return p.network.One(previous, config)
+}
+
+func (p *Provider) deleteNetwork(ctx context.Context, name string) error {
+	if network, ok := p.network.(contextNetwork); ok {
+		return network.DeleteContext(ctx, name)
+	}
+	return p.network.Delete(name)
+}
+
 type interfaceSecretArguments struct {
 	PrivateKey string   `json:"privateKey" jsonschema:"required,minLength=1,format=password"`
 	PreUp      []string `json:"preUp,omitempty"`
@@ -158,6 +177,21 @@ func (p *Provider) Validate(ctx context.Context, resource models.Resource) error
 	return p.validateSemantics(resource.ID, spec)
 }
 
+func (p *Provider) ValidateUpdate(_ context.Context, previous, desired models.Resource) error {
+	oldSpec, err := p.decode(previous.Spec)
+	if err != nil {
+		return err
+	}
+	newSpec, err := p.decode(desired.Spec)
+	if err != nil {
+		return err
+	}
+	if oldSpec.Interface != newSpec.Interface {
+		return fmt.Errorf("interface name cannot be changed from %q to %q", oldSpec.Interface, newSpec.Interface)
+	}
+	return nil
+}
+
 func (p *Provider) Reconcile(ctx context.Context, resource models.Resource) (json.RawMessage, error) {
 	if resource.Kind == "Peer" {
 		return p.reconcilePeer(ctx, resource)
@@ -165,7 +199,7 @@ func (p *Provider) Reconcile(ctx context.Context, resource models.Resource) (jso
 	return p.reconcileInterface(ctx, resource)
 }
 
-func (p *Provider) reconcileInterface(_ context.Context, resource models.Resource) (json.RawMessage, error) {
+func (p *Provider) reconcileInterface(ctx context.Context, resource models.Resource) (json.RawMessage, error) {
 	spec, err := p.decode(resource.Spec)
 	if err != nil {
 		return nil, err
@@ -199,7 +233,7 @@ func (p *Provider) reconcileInterface(_ context.Context, resource models.Resourc
 			return nil, err
 		}
 	}
-	if err := p.network.One(previous, cfg); err != nil {
+	if err := p.applyNetwork(ctx, previous, cfg); err != nil {
 		return nil, err
 	}
 	if err := p.store.Set(&cfg); err != nil {
@@ -214,7 +248,7 @@ func publicKeyString(privateKey awgmodels.Key) string {
 	return publicKey.String()
 }
 
-func (p *Provider) importInterfaceSecret(item models.Resource, rawArguments json.RawMessage) (models.ActionResult, error) {
+func (p *Provider) importInterfaceSecret(ctx context.Context, item models.Resource, rawArguments json.RawMessage) (models.ActionResult, error) {
 	var arguments interfaceSecretArguments
 	if err := json.Unmarshal(rawArguments, &arguments); err != nil {
 		return models.ActionResult{}, err
@@ -241,7 +275,7 @@ func (p *Provider) importInterfaceSecret(item models.Resource, rawArguments json
 	cfg.PostUp = append([]string(nil), arguments.PostUp...)
 	cfg.PreDown = append([]string(nil), arguments.PreDown...)
 	cfg.PostDown = append([]string(nil), arguments.PostDown...)
-	if err := p.network.One(previous, cfg); err != nil {
+	if err := p.applyNetwork(ctx, previous, cfg); err != nil {
 		return models.ActionResult{}, err
 	}
 	if err := p.store.Set(&cfg); err != nil {
@@ -257,12 +291,12 @@ func (p *Provider) Delete(ctx context.Context, resource models.Resource) error {
 	return p.deleteInterface(ctx, resource)
 }
 
-func (p *Provider) deleteInterface(_ context.Context, resource models.Resource) error {
+func (p *Provider) deleteInterface(ctx context.Context, resource models.Resource) error {
 	spec, err := p.decode(resource.Spec)
 	if err != nil {
 		return err
 	}
-	if err := p.network.Delete(spec.Interface); err != nil {
+	if err := p.deleteNetwork(ctx, spec.Interface); err != nil {
 		return err
 	}
 	if err := p.store.Delete(spec.Interface); err != nil && !storage.IsNotFound(err) {
@@ -291,12 +325,18 @@ func (p *Provider) validateSemantics(resourceID string, spec InterfaceSpec) erro
 			return err
 		}
 		for _, item := range items {
-			if item.Provider != "awg" || item.Deleted || item.Resource.Kind != "Interface" || item.Resource.ID == resourceID {
+			if item.Provider != "awg" || item.Deleted || item.Resource.Kind != "Interface" {
 				continue
 			}
 			other, err := p.decode(item.Resource.Spec)
 			if err != nil {
 				return err
+			}
+			if item.Resource.ID == resourceID {
+				if other.Interface != spec.Interface {
+					return fmt.Errorf("interface name cannot be changed from %q to %q", other.Interface, spec.Interface)
+				}
+				continue
 			}
 			if other.Interface == spec.Interface {
 				return fmt.Errorf("interface %q is already managed by resource %q", spec.Interface, item.Resource.Name)

@@ -289,3 +289,62 @@ func TestInterfaceResourceRejectsDuplicateOperatingSystemName(t *testing.T) {
 		t.Fatalf("duplicate operating system interface was accepted: %v", err)
 	}
 }
+
+func TestAWGRejectsInterfaceRename(t *testing.T) {
+	store, err := fs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set(&awgmodels.InterfaceConfig{Interface: "awg0", Address: "10.0.0.1/24", ListenPort: 51820}); err != nil {
+		t.Fatal(err)
+	}
+	inventory := resource.NewMemoryStore()
+	item := models.Resource{ID: "interface-id", APIVersion: APIVersion, Kind: "Interface", Name: "office", Generation: 1, Spec: json.RawMessage(`{"iface":"awg0","listen":51820,"addr":"10.0.0.1/24"}`)}
+	if err := inventory.Put(resource.StoredResource{Provider: "awg", Resource: item}); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := New(store, t.TempDir(), &fakeNetwork{}, "test", inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.Generation = 2
+	item.Spec = json.RawMessage(`{"iface":"awg1","listen":51820,"addr":"10.0.0.1/24"}`)
+	if err := provider.Validate(context.Background(), item); err == nil || !strings.Contains(err.Error(), "cannot be changed") {
+		t.Fatalf("interface rename error = %v", err)
+	}
+}
+
+func TestAWGRuntimeRejectsInterfaceRenameBeforeDesiredWrite(t *testing.T) {
+	store, err := fs.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory := resource.NewMemoryStore()
+	network := &fakeNetwork{}
+	provider, err := New(store, t.TempDir(), network, "test", inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := resource.NewRuntime(inventory, time.Millisecond, time.Hour)
+	if err := runtime.Register(provider); err != nil {
+		t.Fatal(err)
+	}
+	runtime.Start(context.Background())
+	defer runtime.Close()
+	created, err := runtime.Put("awg", "Interface", "office", models.Resource{ID: "interface-id", APIVersion: APIVersion, Kind: "Interface", Name: "office", Spec: json.RawMessage(`{"iface":"awg0","listen":51820,"addr":"10.0.0.1/24"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForProviderStatus(t, runtime, models.ResourceReady)
+	created.Spec = json.RawMessage(`{"iface":"awg1","listen":51820,"addr":"10.0.0.1/24"}`)
+	if _, err := runtime.Put("awg", "Interface", "office", created); err == nil || !strings.Contains(err.Error(), "cannot be changed") {
+		t.Fatalf("runtime rename error = %v", err)
+	}
+	stored, err := runtime.Get("awg", "Interface", "office")
+	if err != nil || stored.Generation != 1 || strings.Contains(string(stored.Spec), "awg1") {
+		t.Fatalf("rejected rename changed desired state: %+v, %v", stored, err)
+	}
+	if network.config.Interface == "awg1" {
+		t.Fatal("rejected rename reached network")
+	}
+}

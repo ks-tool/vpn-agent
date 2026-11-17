@@ -17,10 +17,13 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	awgmodels "github.com/ks-tool/vpn-agent/v2/providers/awg/models"
 )
@@ -217,5 +220,18 @@ func TestInterfaceUpdateRunsUpHooksWithoutPreviousConfig(t *testing.T) {
 	want := "pre-up\npost-up\n"
 	if string(got) != want {
 		t.Fatalf("hook trace = %q, want %q", got, want)
+	}
+}
+
+func TestRunHooksContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	err := runHooksContext(ctx, "x", "test", []string{"sleep 5"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("hook error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("hook ignored cancellation: %v", elapsed)
 	}
 }
