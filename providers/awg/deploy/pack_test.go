@@ -137,7 +137,7 @@ func TestKernelPackages(t *testing.T) {
 		headers  string
 		packages int
 	}{
-		{os: "debian", headers: "linux-headers-${os:kernel}", packages: 1},
+		{os: "debian", headers: "linux-headers-${os:kernel}", packages: 3},
 		{os: "fedora", headers: "kernel-devel-${os:kernel}", packages: 2},
 	} {
 		t.Run(test.os, func(t *testing.T) {

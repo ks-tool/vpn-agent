@@ -78,7 +78,7 @@ func (c *Config) PackRoot() packschema.Root {
 			},
 			{Path: "/etc/apt/sources.list.d/amneziawg.sources", Values: "files/aptRepository", Format: "text", Mode: "0644"},
 		}
-		debian.Names = []string{"amneziawg"}
+		debian.Names = []string{"amneziawg", "amneziawg-dkms", "amneziawg-tools"}
 		debian.Commands = [][]string{{"modprobe", "amneziawg"}}
 		debian.Content = append(debian.Content, packschema.File{
 			Path: "/etc/modules-load.d/amneziawg.conf", Values: "files/kernelModule", Format: "text", Mode: "0644",
