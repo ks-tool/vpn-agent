@@ -19,6 +19,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
@@ -40,6 +41,7 @@ func NewResourceHandler(runtime *resource.Runtime, mws ...mux.Middleware) http.H
 	router.POST("/v1/providers/{provider}/links/prepare", h.prepareLink)
 	router.POST("/v1/providers/{provider}/links/commit", h.commitLink)
 	router.POST("/v1/providers/{provider}/links/delete", h.deleteLink)
+	router.Handle("/v1/providers/{provider}/bridge/{path...}", http.HandlerFunc(h.bridge))
 	router.GET("/v1/events", h.events)
 	return router
 }
@@ -114,6 +116,28 @@ func (h *resourceHandler) action(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	encode(w, result)
+}
+
+func (h *resourceHandler) bridge(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		badRequest(w, err)
+		return
+	}
+	path := "/" + r.PathValue("path")
+	if len(r.URL.RawQuery) > 0 {
+		path += "?" + r.URL.RawQuery
+	}
+	response, err := h.runtime.Bridge(r.Context(), r.PathValue("provider"), r.Method, path, body, map[string]string{"Content-Type": r.Header.Get("Content-Type")})
+	if err != nil {
+		resourceError(w, err)
+		return
+	}
+	for name, value := range response.Headers {
+		w.Header().Set(name, value)
+	}
+	w.WriteHeader(response.Status)
+	_, _ = w.Write(response.Body)
 }
 
 func (h *resourceHandler) events(w http.ResponseWriter, r *http.Request) {

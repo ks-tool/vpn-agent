@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -46,6 +47,9 @@ func (resourceAPIProvider) Reconcile(context.Context, models.Resource) (json.Raw
 func (resourceAPIProvider) Delete(context.Context, models.Resource) error { return nil }
 func (resourceAPIProvider) Action(_ context.Context, _ models.Resource, _ string, arguments json.RawMessage) (models.ActionResult, error) {
 	return models.ActionResult{Type: models.ActionResultJSON, Data: arguments}, nil
+}
+func (resourceAPIProvider) Bridge(_ context.Context, _, path string, _ []byte, _ map[string]string) (*resource.BridgeResponse, error) {
+	return &resource.BridgeResponse{Status: http.StatusOK, Headers: map[string]string{"Content-Type": "application/json"}, Body: []byte(`{"path":` + strconv.Quote(path) + `}`)}, nil
 }
 
 func TestResourceAPI(t *testing.T) {
@@ -113,6 +117,13 @@ func TestResourceAPI(t *testing.T) {
 	decodeResponse(t, response, &action)
 	if string(action.Data) != `{"verbose":true}` {
 		t.Fatalf("unexpected action response: %+v", action)
+	}
+
+	response = request(t, http.MethodGet, server.URL+"/v1/providers/test/bridge/metrics?view=full", nil)
+	var bridged map[string]string
+	decodeResponse(t, response, &bridged)
+	if bridged["path"] != "/metrics?view=full" {
+		t.Fatalf("unexpected bridge path: %+v", bridged)
 	}
 
 	response = request(t, http.MethodDelete, server.URL+"/v1/providers/test/resources/Service/public", nil)

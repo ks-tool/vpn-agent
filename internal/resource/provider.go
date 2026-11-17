@@ -39,6 +39,16 @@ type ActionProvider interface {
 	Action(context.Context, models.Resource, string, json.RawMessage) (models.ActionResult, error)
 }
 
+type BridgeResponse struct {
+	Status  int
+	Headers map[string]string
+	Body    []byte
+}
+
+type BridgeProvider interface {
+	Bridge(context.Context, string, string, []byte, map[string]string) (*BridgeResponse, error)
+}
+
 type LinkProvider interface {
 	PrepareLink(context.Context, models.Link, models.LinkEndpoint) (models.LinkOffer, error)
 	CommitLink(context.Context, models.Link, models.LinkEndpoint, models.LinkOffer) error

@@ -19,6 +19,7 @@ package remote
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,7 +44,12 @@ func startProviderClient(t *testing.T, socket string, definition models.Provider
 	client := &providerClient{cancel: cancel, done: make(chan struct{})}
 	go func() {
 		defer close(client.done)
-		if err := transport.Serve(ctx, "unix://"+socket, definition, api.NewResourceHandler(runtime), runtime); err != nil {
+		handler := http.NewServeMux()
+		handler.Handle("/v1/", api.NewResourceHandler(runtime))
+		handler.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"bridged":true}`))
+		})
+		if err := transport.Serve(ctx, "unix://"+socket, definition, handler, runtime); err != nil {
 			t.Errorf("provider client: %v", err)
 		}
 	}()
@@ -118,6 +124,10 @@ func TestExternalProviderLifecycleDisconnectAndReconnect(t *testing.T) {
 	result, err := core.Action(context.Background(), "example", "Endpoint", "public", "inspect", json.RawMessage(`{}`))
 	if err != nil || string(result.Data) != `{"title":"Public","address":"192.0.2.1"}` {
 		t.Fatalf("external action: %+v, %v", result, err)
+	}
+	bridged, err := core.Bridge(context.Background(), "example", http.MethodGet, "/metrics", nil, nil)
+	if err != nil || string(bridged.Body) != `{"bridged":true}` {
+		t.Fatalf("external bridge: %+v, %v", bridged, err)
 	}
 	link := models.Link{ID: "link", Kind: "example", Source: models.LinkEndpoint{ResourceID: "a"}, Target: models.LinkEndpoint{ResourceID: "b"}}
 	offer, err := core.PrepareLink(context.Background(), "example", link, link.Source)

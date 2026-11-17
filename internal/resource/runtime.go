@@ -269,6 +269,20 @@ func (r *Runtime) Delete(providerName, kind, name string) error {
 	return nil
 }
 
+func (r *Runtime) Bridge(ctx context.Context, providerName, method, path string, body []byte, headers map[string]string) (*BridgeResponse, error) {
+	r.mu.RLock()
+	provider := r.providers[providerName]
+	r.mu.RUnlock()
+	if provider == nil {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownProvider, providerName)
+	}
+	bridge, ok := provider.(BridgeProvider)
+	if !ok {
+		return nil, errors.New("provider does not support HTTP bridge")
+	}
+	return bridge.Bridge(ctx, method, path, body, headers)
+}
+
 func (r *Runtime) Action(ctx context.Context, providerName, kind, name, actionName string, arguments json.RawMessage) (models.ActionResult, error) {
 	provider, definition, err := r.definition(providerName, kind)
 	if err != nil {

@@ -21,6 +21,7 @@ package awg
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,6 +32,9 @@ import (
 
 	agentconfig "github.com/ks-tool/vpn-agent/v2/internal/config"
 	"github.com/ks-tool/vpn-agent/v2/internal/resource"
+	"github.com/ks-tool/vpn-agent/v2/models"
+	"github.com/ks-tool/vpn-agent/v2/mux/middleware"
+	awgapi "github.com/ks-tool/vpn-agent/v2/providers/awg/api"
 	providerdeploy "github.com/ks-tool/vpn-agent/v2/providers/awg/deploy"
 	"github.com/ks-tool/vpn-agent/v2/providers/awg/kernel"
 	"github.com/ks-tool/vpn-agent/v2/providers/awg/metrics"
@@ -154,6 +158,9 @@ func Run(version string) {
 	log.Info().Msg("starting AWG provider control connection")
 	if err := proxy.Serve(proxy.ServeOptions{
 		Address: cfg.AgentAddr, Store: resourceStore, Provider: awgProvider, Start: awgProvider.RestoreLinks,
+		Handler: func(runtime *resource.Runtime) http.Handler {
+			return awgapi.NewWithResources(models.HostInfo{}, store, collector, latency, runtime, middleware.RequestID, middleware.Logging)
+		},
 		Close: func() error {
 			stopMetrics()
 			select {

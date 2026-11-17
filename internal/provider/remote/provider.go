@@ -254,6 +254,17 @@ func (p *Provider) request(ctx context.Context, method, path string, body []byte
 	return session.request(ctx, &providerv1.AgentMessage{Method: method, Path: path, Body: body, Headers: headers})
 }
 
+func (p *Provider) Bridge(ctx context.Context, method, path string, body []byte, headers map[string]string) (*resource.BridgeResponse, error) {
+	response, err := p.request(ctx, method, path, body, headers)
+	if err != nil {
+		return nil, err
+	}
+	if len(response.Error) > 0 {
+		return nil, errors.New(response.Error)
+	}
+	return &resource.BridgeResponse{Status: int(response.Status), Headers: response.Headers, Body: response.Body}, nil
+}
+
 func (p *Provider) do(ctx context.Context, method, path string, input, output any) error {
 	var body []byte
 	if input != nil {
