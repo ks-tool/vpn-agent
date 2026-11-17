@@ -50,7 +50,7 @@ type PeerSpec struct {
 }
 
 type clientConfigArguments struct {
-	Endpoint   string   `json:"endpoint" jsonschema:"required,minLength=1"`
+	Endpoint   string   `json:"endpoint,omitempty"`
 	AllowedIPs []string `json:"allowedIPs,omitempty"`
 }
 
@@ -306,9 +306,6 @@ func (p *Provider) renderClientConfig(item models.Resource, rawArguments json.Ra
 	if err := json.Unmarshal(rawArguments, &arguments); err != nil {
 		return models.ActionResult{}, err
 	}
-	if arguments.Endpoint == "" {
-		return models.ActionResult{}, errors.New("endpoint is required")
-	}
 	spec, err := p.decodePeer(item.Spec)
 	if err != nil {
 		return models.ActionResult{}, err
@@ -347,6 +344,7 @@ func (p *Provider) renderClientConfig(item models.Resource, rawArguments json.Ra
 	if iface.MTU > 0 {
 		fmt.Fprintf(&config, "MTU = %d\n", iface.MTU)
 	}
+	writeClientObfuscation(&config, interfaceSpec)
 	fmt.Fprintf(&config, "\n[Peer]\nPublicKey = %s\n", publicKeyString(iface.PrivateKey))
 	if peer.PresharedKey != nil {
 		fmt.Fprintf(&config, "PresharedKey = %s\n", peer.PresharedKey.String())
@@ -355,12 +353,44 @@ func (p *Provider) renderClientConfig(item models.Resource, rawArguments json.Ra
 	if len(allowedIPs) == 0 {
 		allowedIPs = []string{"0.0.0.0/0"}
 	}
-	fmt.Fprintf(&config, "AllowedIPs = %s\nEndpoint = %s\n", strings.Join(allowedIPs, ", "), arguments.Endpoint)
+	fmt.Fprintf(&config, "AllowedIPs = %s\n", strings.Join(allowedIPs, ", "))
+	if len(arguments.Endpoint) > 0 {
+		fmt.Fprintf(&config, "Endpoint = %s\n", arguments.Endpoint)
+	}
 	if spec.KeepaliveSeconds > 0 {
 		fmt.Fprintf(&config, "PersistentKeepalive = %d\n", spec.KeepaliveSeconds)
 	}
 	data, _ := json.Marshal(config.String())
 	return models.ActionResult{Type: models.ActionResultFile, Data: data, FileName: spec.Name + ".conf", MediaType: "text/plain"}, nil
+}
+
+func writeClientObfuscation(config *strings.Builder, spec InterfaceSpec) {
+	writeInt := func(name string, value *int) {
+		if value != nil {
+			fmt.Fprintf(config, "%s = %d\n", name, *value)
+		}
+	}
+	writeString := func(name string, value *string) {
+		if value != nil {
+			fmt.Fprintf(config, "%s = %s\n", name, *value)
+		}
+	}
+	writeInt("Jc", spec.Jc)
+	writeInt("Jmin", spec.Jmin)
+	writeInt("Jmax", spec.Jmax)
+	writeInt("S1", spec.S1)
+	writeInt("S2", spec.S2)
+	writeInt("S3", spec.S3)
+	writeInt("S4", spec.S4)
+	writeString("H1", spec.H1)
+	writeString("H2", spec.H2)
+	writeString("H3", spec.H3)
+	writeString("H4", spec.H4)
+	writeString("I1", spec.I1)
+	writeString("I2", spec.I2)
+	writeString("I3", spec.I3)
+	writeString("I4", spec.I4)
+	writeString("I5", spec.I5)
 }
 
 func (p *Provider) rotatePeerKeys(item models.Resource) (models.ActionResult, error) {

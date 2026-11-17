@@ -53,7 +53,7 @@ func TestPeerLifecycleActionsAndSecretHandling(t *testing.T) {
 	}
 	runtime.Start(context.Background())
 	defer runtime.Close()
-	if _, err := runtime.Put("awg", "Interface", "office", models.Resource{APIVersion: APIVersion, Spec: json.RawMessage(`{"iface":"awg0","listen":51820,"addr":"10.0.0.1/24","mtu":1280}`)}); err != nil {
+	if _, err := runtime.Put("awg", "Interface", "office", models.Resource{APIVersion: APIVersion, Spec: json.RawMessage(`{"iface":"awg0","listen":51820,"addr":"10.0.0.1/24","mtu":1280,"jc":3,"jmin":10,"jmax":50,"h1":"header"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	waitForProviderStatus(t, runtime, models.ResourceReady)
@@ -97,8 +97,18 @@ func TestPeerLifecycleActionsAndSecretHandling(t *testing.T) {
 	if err := json.Unmarshal(result.Data, &config); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(config, "[Interface]") || !strings.Contains(config, "MTU = 1280") || !strings.Contains(config, "Endpoint = 192.0.2.1:51820") || !strings.Contains(config, publicKeyString(interfaceKey)) {
+	if !strings.Contains(config, "[Interface]") || !strings.Contains(config, "MTU = 1280") || !strings.Contains(config, "Jc = 3") || !strings.Contains(config, "Jmin = 10") || !strings.Contains(config, "Jmax = 50") || !strings.Contains(config, "H1 = header") || !strings.Contains(config, "Endpoint = 192.0.2.1:51820") || !strings.Contains(config, publicKeyString(interfaceKey)) {
 		t.Fatalf("unexpected client config: %s", config)
+	}
+	withoutEndpoint, err := runtime.Action(context.Background(), "awg", "Peer", "alice-laptop", "renderClientConfig", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(withoutEndpoint.Data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(config, "Endpoint =") {
+		t.Fatalf("empty endpoint was rendered: %s", config)
 	}
 
 	if _, err := runtime.Action(context.Background(), "awg", "Peer", "alice-laptop", "rotateKeys", json.RawMessage(`{}`)); err != nil {
